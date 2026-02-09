@@ -12,6 +12,10 @@ import io
 import json
 import mimetypes
 import os
+import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
@@ -24,6 +28,14 @@ app = FastAPI(title="DVC Viewer", version="0.1.0")
 
 # The project dir is set at startup via environment variable
 _project_dir: str = os.environ.get("DVC_VIEWER_PROJECT_DIR", os.getcwd())
+
+# Resolve the DVC binary path
+_dvc_bin = shutil.which("dvc")
+if not _dvc_bin:
+    # Try the same venv as dvc-viewer
+    _venv_dvc = Path(sys.executable).parent / "dvc"
+    if _venv_dvc.exists():
+        _dvc_bin = str(_venv_dvc)
 
 # Serve static files
 _static_dir = Path(__file__).parent / "static"
@@ -161,7 +173,7 @@ async def run_pipeline(request: Request):
     stage = body.get("stage")  # None = run all
     force = body.get("force", False)
 
-    cmd = ["dvc", "repro"]
+    cmd = [_dvc_bin or "dvc", "repro"]
     if stage:
         cmd.append(stage)
     if force:
@@ -214,3 +226,102 @@ async def run_pipeline(request: Request):
             "failed_stage": stage,
             "stage": stage,
         }, status_code=500)
+
+
+@app.get("/api/file/history")
+async def file_history(path: str = Query(..., description="Relative file path")):
+    """Get git commit history for a file."""
+    project = Path(_project_dir).resolve()
+    target = (project / path).resolve()
+    if not str(target).startswith(str(project)):
+        return JSONResponse(content={"error": "Invalid path"}, status_code=400)
+
+    try:
+        result = subprocess.run(
+            ["git", "log", "--pretty=format:%H|%s|%an|%ai", "--follow", "--", path],
+            capture_output=True, text=True, cwd=str(project), timeout=15,
+        )
+        if result.returncode != 0:
+            return JSONResponse(content={"commits": [], "error": result.stderr.strip()})
+
+        commits = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("|", 3)
+            if len(parts) >= 4:
+                commits.append({
+                    "hash": parts[0],
+                    "message": parts[1],
+                    "author": parts[2],
+                    "date": parts[3],
+                })
+        return JSONResponse(content={"commits": commits, "path": path})
+    except Exception as e:
+        return JSONResponse(content={"commits": [], "error": str(e)})
+
+
+@app.get("/api/file/at-commit")
+async def file_at_commit(
+    path: str = Query(..., description="Relative file path"),
+    commit: str = Query(..., description="Git commit hash"),
+):
+    """Get file content at a specific git commit."""
+    project = Path(_project_dir).resolve()
+    target = (project / path).resolve()
+    if not str(target).startswith(str(project)):
+        return JSONResponse(content={"error": "Invalid path"}, status_code=400)
+
+    # Validate commit hash (alphanumeric only)
+    if not re.match(r'^[a-f0-9]+$', commit):
+        return JSONResponse(content={"error": "Invalid commit hash"}, status_code=400)
+
+    ext = Path(path).suffix.lower()
+    is_binary = ext in _IMAGE_EXTENSIONS or ext in _PDF_EXTENSIONS
+
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit}:{path}"],
+            capture_output=True,
+            cwd=str(project),
+            timeout=15,
+            text=not is_binary,
+        )
+        if result.returncode != 0:
+            error_msg = result.stderr if isinstance(result.stderr, str) else result.stderr.decode()
+            return JSONResponse(content={"error": error_msg.strip()}, status_code=404)
+
+        if is_binary:
+            mime, _ = mimetypes.guess_type(path)
+            if mime is None:
+                mime = "application/octet-stream"
+            return Response(content=result.stdout, media_type=mime)
+
+        content = result.stdout
+
+        # For CSV files, parse into structured data
+        if ext in _CSV_EXTENSIONS:
+            delimiter = "\t" if ext == ".tsv" else ","
+            reader = csv.DictReader(io.StringIO(content), delimiter=delimiter)
+            columns = reader.fieldnames or []
+            rows = []
+            for i, row in enumerate(reader):
+                if i >= 10000:
+                    break
+                rows.append(row)
+            return JSONResponse(content={
+                "type": "csv",
+                "columns": columns,
+                "rows": rows,
+                "total": len(rows),
+                "commit": commit,
+            })
+
+        # For text files
+        return JSONResponse(content={
+            "type": "text",
+            "content": content[:500000],
+            "commit": commit,
+        })
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
