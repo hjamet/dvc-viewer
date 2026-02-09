@@ -203,17 +203,34 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
 
 def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
     """Convert a Pipeline to a JSON-serializable dict for the API."""
+    # Determine the project dir from the first stage or fallback
+    project_dir = Path(os.environ.get("DVC_VIEWER_PROJECT_DIR", os.getcwd()))
+
+    def _file_status(path: str, stage_state: str) -> dict:
+        """Return file info with existence check and status color."""
+        full_path = project_dir / path
+        exists = full_path.exists()
+        if not exists:
+            status = "missing"     # red
+        elif stage_state == "needs_rerun":
+            status = "outdated"    # orange
+        elif stage_state == "valid":
+            status = "current"     # green
+        else:
+            status = "unknown"     # grey (never_run but file exists)
+        return {"path": path, "exists": exists, "status": status}
+
     nodes = []
     for name, stage in pipeline.stages.items():
         nodes.append(
             {
                 "id": name,
                 "cmd": stage.cmd,
-                "deps": stage.deps,
-                "outs": stage.outs,
+                "deps": [_file_status(d, stage.state) for d in stage.deps],
+                "outs": [_file_status(o, stage.state) for o in stage.outs],
                 "params": stage.params,
-                "metrics": stage.metrics,
-                "plots": stage.plots,
+                "metrics": [_file_status(m, stage.state) for m in stage.metrics],
+                "plots": [_file_status(p, stage.state) for p in stage.plots],
                 "state": stage.state,
             }
         )

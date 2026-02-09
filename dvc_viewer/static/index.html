@@ -313,6 +313,8 @@
             border: 1px solid var(--border);
             border-radius: 6px;
             transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
         }
 
         .file-item:hover {
@@ -321,21 +323,64 @@
             color: var(--text-primary);
         }
 
-        .file-item::before {
-            content: '📄 ';
-            font-size: 11px;
+        .file-item .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+
+        .file-item .status-dot.current {
+            background: var(--state-valid);
+            box-shadow: 0 0 6px var(--state-valid-glow);
+        }
+
+        .file-item .status-dot.outdated {
+            background: var(--state-rerun);
+            box-shadow: 0 0 6px var(--state-rerun-glow);
+        }
+
+        .file-item .status-dot.missing {
+            background: #ef4444;
+            box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+        }
+
+        .file-item .status-dot.unknown {
+            background: var(--state-never);
+            box-shadow: 0 0 6px var(--state-never-glow);
+        }
+
+        .file-item.status-current {
+            border-left: 3px solid var(--state-valid);
+        }
+
+        .file-item.status-outdated {
+            border-left: 3px solid var(--state-rerun);
+        }
+
+        .file-item.status-missing {
+            border-left: 3px solid #ef4444;
+        }
+
+        .file-item.status-unknown {
+            border-left: 3px solid var(--state-never);
         }
 
         .file-item.param::before {
             content: '⚙️ ';
+            font-size: 11px;
         }
 
         .file-item.metric::before {
             content: '📊 ';
+            font-size: 11px;
         }
 
         .file-item.plot::before {
             content: '📈 ';
+            font-size: 11px;
         }
 
         /* ─── Empty sidebar ─── */
@@ -1152,7 +1197,8 @@
                 const INSPECTABLE_EXTS = ['.csv', '.tsv', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.pdf', '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.jsonl'];
                 const isInspectable = (path) => INSPECTABLE_EXTS.some(ext => path.toLowerCase().endsWith(ext));
 
-                const addSection = (title, items, cls = '', clickable = false) => {
+                // File items are now objects: {path, exists, status}
+                const addFileSection = (title, items, cls = '', clickable = false) => {
                     if (!items || items.length === 0) return;
                     const sec = document.createElement('div');
                     sec.className = 'sidebar-section';
@@ -1160,14 +1206,19 @@
                     const ul = document.createElement('ul');
                     ul.className = 'file-list';
                     for (const item of items) {
+                        const path = typeof item === 'string' ? item : item.path;
+                        const status = typeof item === 'string' ? 'unknown' : (item.status || 'unknown');
+                        const canInspect = clickable && isInspectable(path);
                         const li = document.createElement('li');
-                        const canInspect = clickable && isInspectable(item);
-                        li.className = 'file-item' + (cls ? ' ' + cls : '') + (canInspect ? ' inspectable' : '');
-                        li.textContent = item;
+                        li.className = 'file-item' + (cls ? ' ' + cls : '') + ` status-${status}` + (canInspect ? ' inspectable' : '');
+                        const dot = document.createElement('span');
+                        dot.className = `status-dot ${status}`;
+                        li.appendChild(dot);
+                        li.appendChild(document.createTextNode(path));
                         if (canInspect) {
                             li.addEventListener('click', (e) => {
                                 e.stopPropagation();
-                                openFileInspector(item);
+                                openFileInspector(path);
                             });
                         }
                         ul.appendChild(li);
@@ -1176,11 +1227,29 @@
                     sections.appendChild(sec);
                 };
 
-                addSection('Dependencies', data.deps);
-                addSection('Outputs', data.outs, '', true);
+                // Params remain plain strings
+                const addSection = (title, items, cls = '') => {
+                    if (!items || items.length === 0) return;
+                    const sec = document.createElement('div');
+                    sec.className = 'sidebar-section';
+                    sec.innerHTML = `<div class="section-title">${title}</div>`;
+                    const ul = document.createElement('ul');
+                    ul.className = 'file-list';
+                    for (const item of items) {
+                        const li = document.createElement('li');
+                        li.className = 'file-item' + (cls ? ' ' + cls : '');
+                        li.textContent = item;
+                        ul.appendChild(li);
+                    }
+                    sec.appendChild(ul);
+                    sections.appendChild(sec);
+                };
+
+                addFileSection('Dependencies', data.deps, '', false);
+                addFileSection('Outputs', data.outs, '', true);
                 addSection('Parameters', data.params, 'param');
-                addSection('Metrics', data.metrics, 'metric', true);
-                addSection('Plots', data.plots, 'plot', true);
+                addFileSection('Metrics', data.metrics, 'metric', true);
+                addFileSection('Plots', data.plots, 'plot', true);
             }
 
             function clearDetail() {
