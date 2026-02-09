@@ -840,6 +840,215 @@
         ::-webkit-scrollbar-thumb:hover {
             background: var(--text-muted);
         }
+
+        /* ─── Run Buttons ─── */
+        .run-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border: 1px solid var(--border-glow);
+            border-radius: 8px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .run-btn:hover {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.3));
+            border-color: #818cf8;
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .run-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .run-btn.running {
+            animation: pulse-glow 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 8px rgba(99, 102, 241, 0.2);
+            }
+
+            50% {
+                box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+            }
+        }
+
+        .run-btn-sidebar {
+            width: 100%;
+            justify-content: center;
+            margin-top: 12px;
+            padding: 10px 16px;
+        }
+
+        .run-spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: none;
+        }
+
+        .run-btn.running .run-spinner {
+            display: inline-block;
+        }
+
+        .run-btn.running .run-icon {
+            display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ─── Log Viewer Overlay ─── */
+        .log-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 2000;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(6px);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .log-overlay.active {
+            display: flex;
+        }
+
+        .log-container {
+            width: min(900px, 90vw);
+            max-height: 80vh;
+            background: var(--bg-card);
+            border: 1px solid var(--border-glow);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .log-title {
+            font-family: 'Inter', sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .log-status {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+
+        .log-status.success {
+            background: rgba(52, 211, 153, 0.2);
+            color: var(--state-valid);
+        }
+
+        .log-status.error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+
+        .log-status.running {
+            background: rgba(99, 102, 241, 0.2);
+            color: #818cf8;
+        }
+
+        .log-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .log-copy-btn {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-glass);
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .log-copy-btn:hover {
+            background: var(--accent-glow);
+            color: var(--text-primary);
+        }
+
+        .log-close-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-glass);
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.15s ease;
+        }
+
+        .log-close-btn:hover {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+
+        .log-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+        }
+
+        .log-content {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* ─── Error state on nodes ─── */
+        .cy-node-error {
+            border-color: #ef4444 !important;
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.6) !important;
+        }
     </style>
 </head>
 
@@ -869,6 +1078,12 @@
                     Never run
                 </div>
             </div>
+        </div>
+        <button class="run-btn" id="btn-run-all" title="Run entire pipeline">
+            <span class="run-icon">▶</span>
+            <span class="run-spinner"></span>
+            Run All
+        </button>
         </div>
     </header>
 
@@ -915,9 +1130,33 @@
                     <div class="sidebar-command" id="detail-cmd"></div>
                 </div>
                 <div class="sidebar-content" id="detail-sections"></div>
+                <button class="run-btn run-btn-sidebar" id="btn-run-stage" title="Run this stage">
+                    <span class="run-icon">▶</span>
+                    <span class="run-spinner"></span>
+                    Run Stage
+                </button>
             </div>
         </aside>
     </main>
+
+    <!-- Log Viewer Overlay -->
+    <div class="log-overlay" id="log-overlay">
+        <div class="log-container">
+            <div class="log-header">
+                <div class="log-title">
+                    <span id="log-title-text">Pipeline Logs</span>
+                    <span class="log-status" id="log-status"></span>
+                </div>
+                <div class="log-actions">
+                    <button class="log-copy-btn" id="log-copy">📋 Copy</button>
+                    <button class="log-close-btn" id="log-close">✕</button>
+                </div>
+            </div>
+            <div class="log-body">
+                <pre class="log-content" id="log-content">Waiting for logs…</pre>
+            </div>
+        </div>
+    </div>
 
     <!-- File Inspector Modal -->
     <div class="modal-overlay" id="modal-overlay">
@@ -1122,6 +1361,7 @@
                 // ─── Click on node → select & show detail ───
                 cy.on('tap', 'node', function (evt) {
                     const node = evt.target;
+                    selectedStage = node.data().id;
                     showDetail(node.data());
                     highlightNeighborhood(node);
                 });
@@ -1129,6 +1369,7 @@
                 // ─── Click on background → deselect ───
                 cy.on('tap', function (evt) {
                     if (evt.target === cy) {
+                        selectedStage = null;
                         clearDetail();
                         clearHighlight();
                     }
@@ -1487,7 +1728,159 @@
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     document.getElementById('modal-overlay').classList.remove('visible');
+                    document.getElementById('log-overlay').classList.remove('active');
                 }
+            });
+
+            // ─── Run Pipeline / Stage ───
+            let selectedStage = null;
+            let isRunning = false;
+
+            function showLogOverlay(title, statusClass, statusText, content) {
+                const overlay = document.getElementById('log-overlay');
+                document.getElementById('log-title-text').textContent = title;
+                const badge = document.getElementById('log-status');
+                badge.className = 'log-status ' + statusClass;
+                badge.textContent = statusText;
+                document.getElementById('log-content').textContent = content;
+                overlay.classList.add('active');
+            }
+
+            async function runPipeline(stage = null) {
+                if (isRunning) return;
+                isRunning = true;
+
+                const allBtn = document.getElementById('btn-run-all');
+                const stageBtn = document.getElementById('btn-run-stage');
+                allBtn.classList.add('running');
+                allBtn.disabled = true;
+                stageBtn.classList.add('running');
+                stageBtn.disabled = true;
+
+                const label = stage ? `Stage: ${stage}` : 'Full Pipeline';
+                showLogOverlay(label, 'running', 'RUNNING…', 'Executing pipeline… please wait.');
+
+                try {
+                    const res = await fetch('/api/run', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stage: stage, force: false }),
+                    });
+                    const data = await res.json();
+
+                    const badge = document.getElementById('log-status');
+                    document.getElementById('log-content').textContent = data.logs || '(no output)';
+
+                    if (data.success) {
+                        badge.className = 'log-status success';
+                        badge.textContent = 'SUCCESS';
+                    } else {
+                        badge.className = 'log-status error';
+                        badge.textContent = 'FAILED';
+
+                        // Highlight failed node in graph
+                        if (data.failed_stage && cy) {
+                            const failedNode = cy.getElementById(data.failed_stage);
+                            if (failedNode.length) {
+                                failedNode.style({
+                                    'border-color': '#ef4444',
+                                    'border-width': 4,
+                                    'background-color': 'rgba(239, 68, 68, 0.15)',
+                                });
+                                // Pulsing animation via class
+                                setTimeout(() => {
+                                    failedNode.animate({
+                                        style: { 'border-width': 2 },
+                                    }, { duration: 600 });
+                                }, 2000);
+                            }
+                        }
+                    }
+
+                    // Refresh pipeline data after run
+                    await refreshPipeline();
+
+                } catch (err) {
+                    document.getElementById('log-content').textContent = 'Error: ' + err.message;
+                    const badge = document.getElementById('log-status');
+                    badge.className = 'log-status error';
+                    badge.textContent = 'ERROR';
+                } finally {
+                    isRunning = false;
+                    allBtn.classList.remove('running');
+                    allBtn.disabled = false;
+                    stageBtn.classList.remove('running');
+                    stageBtn.disabled = false;
+                }
+            }
+
+            async function refreshPipeline() {
+                try {
+                    const res = await fetch('/api/pipeline');
+                    const data = await res.json();
+                    if (data.error) return;
+
+                    // Update node states in the graph
+                    for (const node of data.nodes) {
+                        const cyNode = cy.getElementById(node.id);
+                        if (cyNode.length) {
+                            cyNode.data('state', node.state);
+                            cyNode.data('deps', node.deps);
+                            cyNode.data('outs', node.outs);
+                            cyNode.data('metrics', node.metrics);
+                            cyNode.data('plots', node.plots);
+
+                            // Update visual style based on state
+                            const colors = {
+                                valid: { bg: 'rgba(52,211,153,0.12)', border: '#34d399' },
+                                needs_rerun: { bg: 'rgba(251,191,36,0.12)', border: '#fbbf24' },
+                                never_run: { bg: 'rgba(148,163,184,0.12)', border: '#94a3b8' },
+                            };
+                            const c = colors[node.state] || colors.never_run;
+                            cyNode.style({
+                                'background-color': c.bg,
+                                'border-color': c.border,
+                            });
+                        }
+                    }
+
+                    // Update stats bar
+                    updateStats(data);
+
+                    // If a stage is selected, refresh its sidebar
+                    if (selectedStage) {
+                        const updatedNode = data.nodes.find(n => n.id === selectedStage);
+                        if (updatedNode) showDetail(updatedNode);
+                    }
+                } catch (err) {
+                    console.error('Failed to refresh pipeline:', err);
+                }
+            }
+
+            // Log overlay events
+            document.getElementById('log-close').addEventListener('click', () => {
+                document.getElementById('log-overlay').classList.remove('active');
+            });
+            document.getElementById('log-overlay').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) {
+                    document.getElementById('log-overlay').classList.remove('active');
+                }
+            });
+            document.getElementById('log-copy').addEventListener('click', () => {
+                const logs = document.getElementById('log-content').textContent;
+                navigator.clipboard.writeText(logs).then(() => {
+                    const btn = document.getElementById('log-copy');
+                    btn.textContent = '✅ Copied!';
+                    setTimeout(() => btn.textContent = '📋 Copy', 2000);
+                });
+            });
+
+            // Run All button
+            document.getElementById('btn-run-all').addEventListener('click', () => runPipeline(null));
+
+            // Run Stage button
+            document.getElementById('btn-run-stage').addEventListener('click', () => {
+                if (selectedStage) runPipeline(selectedStage);
             });
 
             boot();

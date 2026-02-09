@@ -150,3 +150,67 @@ async def file_raw(path: str = Query(..., description="Relative file path")):
         mime = "application/octet-stream"
 
     return FileResponse(path=str(target), media_type=mime)
+
+
+@app.post("/api/run")
+async def run_pipeline(request: Request):
+    """Run a single stage or the entire pipeline via `dvc repro`."""
+    import subprocess
+
+    body = await request.json()
+    stage = body.get("stage")  # None = run all
+    force = body.get("force", False)
+
+    cmd = ["dvc", "repro"]
+    if stage:
+        cmd.append(stage)
+    if force:
+        cmd.append("--force")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(_project_dir),
+            timeout=600,
+        )
+
+        logs = (result.stdout or "") + (result.stderr or "")
+        success = result.returncode == 0
+
+        # Try to extract the failed stage from DVC error output
+        failed_stage = None
+        if not success:
+            # DVC typically outputs "ERROR: failed to reproduce '<stage>'"
+            import re
+            match = re.search(r"failed to reproduce '(\w+)'", logs)
+            if match:
+                failed_stage = match.group(1)
+            else:
+                # Also look for "stage '<name>' failed"
+                match = re.search(r"Stage '(\w[\w-]*)' failed", logs, re.IGNORECASE)
+                if match:
+                    failed_stage = match.group(1)
+
+        return JSONResponse(content={
+            "success": success,
+            "returncode": result.returncode,
+            "logs": logs,
+            "failed_stage": failed_stage,
+            "stage": stage,
+        })
+    except FileNotFoundError:
+        return JSONResponse(content={
+            "success": False,
+            "logs": "Error: DVC is not installed or not found in PATH.",
+            "failed_stage": None,
+            "stage": stage,
+        }, status_code=500)
+    except subprocess.TimeoutExpired:
+        return JSONResponse(content={
+            "success": False,
+            "logs": "Error: Pipeline execution timed out (10 minute limit).",
+            "failed_stage": stage,
+            "stage": stage,
+        }, status_code=500)
