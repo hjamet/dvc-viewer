@@ -1049,6 +1049,91 @@
             border-color: #ef4444 !important;
             box-shadow: 0 0 20px rgba(239, 68, 68, 0.6) !important;
         }
+
+        /* ─── Version Navigation ─── */
+        .version-nav {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 20px;
+            background: rgba(30, 41, 59, 0.6);
+            border-bottom: 1px solid var(--border);
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+        }
+
+        .version-nav.active {
+            display: flex;
+        }
+
+        .version-nav-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-glass);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: all 0.15s ease;
+        }
+
+        .version-nav-btn:hover:not(:disabled) {
+            background: var(--accent-glow);
+            border-color: var(--border-glow);
+            color: var(--text-primary);
+        }
+
+        .version-nav-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .version-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .version-commit-msg {
+            color: var(--text-primary);
+            font-weight: 500;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .version-commit-meta {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .version-counter {
+            color: var(--text-muted);
+            font-size: 11px;
+            white-space: nowrap;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .version-current-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            background: rgba(99, 102, 241, 0.2);
+            color: #818cf8;
+            letter-spacing: 0.05em;
+        }
     </style>
 </head>
 
@@ -1172,6 +1257,15 @@
             <div class="modal-toolbar" id="modal-toolbar" style="display: none;">
                 <input class="modal-search" id="modal-search" type="text" placeholder="Filter rows...">
                 <span class="modal-stats" id="modal-stats"></span>
+            </div>
+            <div class="version-nav" id="version-nav">
+                <button class="version-nav-btn" id="version-prev" title="Previous version">◀</button>
+                <div class="version-info">
+                    <div class="version-commit-msg" id="version-msg">Loading history…</div>
+                    <div class="version-commit-meta" id="version-meta"></div>
+                </div>
+                <span class="version-counter" id="version-counter"></span>
+                <button class="version-nav-btn" id="version-next" title="Next version">▶</button>
             </div>
             <div class="modal-body" id="modal-body"></div>
         </div>
@@ -1541,6 +1635,132 @@
                 csv: '📊', image: '🖼️', pdf: '📕', text: '📄', binary: '📦',
             };
 
+            // ─── Version History State ───
+            let _versionHistory = [];    // Array of {hash, message, author, date}
+            let _versionIndex = -1;      // -1 = current (working tree), 0 = most recent commit, etc.
+            let _currentFilePath = null;
+            let _currentFileType = null;
+
+            async function loadFileHistory(filePath) {
+                try {
+                    const res = await fetch(`/api/file/history?path=${encodeURIComponent(filePath)}`);
+                    const data = await res.json();
+                    _versionHistory = data.commits || [];
+                } catch {
+                    _versionHistory = [];
+                }
+            }
+
+            function updateVersionNav() {
+                const nav = document.getElementById('version-nav');
+                const prevBtn = document.getElementById('version-prev');
+                const nextBtn = document.getElementById('version-next');
+                const msg = document.getElementById('version-msg');
+                const meta = document.getElementById('version-meta');
+                const counter = document.getElementById('version-counter');
+
+                if (_versionHistory.length === 0) {
+                    nav.classList.remove('active');
+                    return;
+                }
+
+                nav.classList.add('active');
+
+                if (_versionIndex === -1) {
+                    msg.innerHTML = '<span class="version-current-badge">CURRENT</span> Working tree';
+                    meta.textContent = 'Live file on disk';
+                } else {
+                    const commit = _versionHistory[_versionIndex];
+                    msg.textContent = commit.message;
+                    const shortHash = commit.hash.substring(0, 8);
+                    const dateStr = commit.date.split(' ').slice(0, 2).join(' ');
+                    meta.textContent = `${shortHash} · ${commit.author} · ${dateStr}`;
+                }
+
+                const total = _versionHistory.length + 1; // +1 for current
+                const pos = _versionIndex + 2; // 1-based, current=1
+                counter.textContent = `${pos}/${total}`;
+
+                // Prev = go to older version (higher index)
+                prevBtn.disabled = (_versionIndex >= _versionHistory.length - 1);
+                // Next = go to newer version (lower index, or back to current)
+                nextBtn.disabled = (_versionIndex === -1);
+            }
+
+            async function navigateVersion(direction) {
+                // direction: -1 = newer (toward current), +1 = older
+                const newIndex = _versionIndex + direction;
+                if (newIndex < -1 || newIndex >= _versionHistory.length) return;
+
+                _versionIndex = newIndex;
+                updateVersionNav();
+                await loadVersionContent();
+            }
+
+            async function loadVersionContent() {
+                const body = document.getElementById('modal-body');
+                body.innerHTML = '<div class="loading-overlay" style="position:relative;min-height:200px;"><div class="loading-spinner"></div></div>';
+
+                const filePath = _currentFilePath;
+                const fileType = _currentFileType;
+
+                try {
+                    if (_versionIndex === -1) {
+                        // Load current version (from disk)
+                        switch (fileType) {
+                            case 'csv': await renderCSV(filePath); break;
+                            case 'image': renderImage(filePath); break;
+                            case 'pdf': renderPDF(filePath); break;
+                            case 'text': await renderText(filePath); break;
+                            default: body.innerHTML = '<div class="file-not-found"><div class="file-not-found-icon">📦</div><div class="file-not-found-text">Binary file</div></div>';
+                        }
+                        return;
+                    }
+
+                    const commit = _versionHistory[_versionIndex].hash;
+
+                    if (fileType === 'csv') {
+                        const res = await fetch(`/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}`);
+                        const data = await res.json();
+                        if (data.error) { body.innerHTML = `<div class="file-not-found"><div class="file-not-found-icon">🕰️</div><div class="file-not-found-text">${data.error}</div></div>`; return; }
+                        // Render CSV from historical data
+                        _csvData = data;
+                        _csvSortCol = null; _csvSortAsc = true;
+                        const toolbar = document.getElementById('modal-toolbar');
+                        const search = document.getElementById('modal-search');
+                        const stats = document.getElementById('modal-stats');
+                        toolbar.style.display = 'flex';
+                        search.value = '';
+                        stats.textContent = `${data.total} rows · ${data.columns.length} cols`;
+                        renderCSVTable('');
+                    } else if (fileType === 'image') {
+                        body.innerHTML = `<div class="image-viewer"><img src="/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}" alt="${filePath}"></div>`;
+                    } else if (fileType === 'text') {
+                        const res = await fetch(`/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}`);
+                        const data = await res.json();
+                        if (data.error) { body.innerHTML = `<div class="file-not-found"><div class="file-not-found-icon">🕰️</div><div class="file-not-found-text">${data.error}</div></div>`; return; }
+                        if (filePath.endsWith('.json')) {
+                            try {
+                                const parsed = JSON.parse(data.content);
+                                body.innerHTML = `<div class="text-viewer">${JSON.stringify(parsed, null, 2)}</div>`;
+                            } catch { body.innerHTML = `<div class="text-viewer">${escapeHtml(data.content)}</div>`; }
+                        } else {
+                            body.innerHTML = `<div class="text-viewer">${escapeHtml(data.content)}</div>`;
+                        }
+                    } else if (fileType === 'pdf') {
+                        body.innerHTML = `<div class="pdf-viewer"><iframe src="/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}"></iframe></div>`;
+                    } else {
+                        body.innerHTML = '<div class="file-not-found"><div class="file-not-found-icon">📦</div><div class="file-not-found-text">Preview not available for this version</div></div>';
+                    }
+                } catch (err) {
+                    body.innerHTML = `<div class="file-not-found"><div class="file-not-found-icon">💥</div><div class="file-not-found-text">Error: ${err.message}</div></div>`;
+                }
+            }
+
+            // Version nav button events
+            document.getElementById('version-prev').addEventListener('click', () => navigateVersion(1));
+            document.getElementById('version-next').addEventListener('click', () => navigateVersion(-1));
+
             async function openFileInspector(filePath) {
                 const overlay = document.getElementById('modal-overlay');
                 const body = document.getElementById('modal-body');
@@ -1553,14 +1773,28 @@
                 search.value = '';
                 overlay.classList.add('visible');
 
-                // Get file info
+                // Reset version state
+                _currentFilePath = filePath;
+                _versionHistory = [];
+                _versionIndex = -1;
+                _currentFileType = null;
+                document.getElementById('version-nav').classList.remove('active');
+
+                // Load file info and history in parallel
                 try {
-                    const infoRes = await fetch(`/api/file/info?path=${encodeURIComponent(filePath)}`);
+                    const [infoRes, _] = await Promise.all([
+                        fetch(`/api/file/info?path=${encodeURIComponent(filePath)}`),
+                        loadFileHistory(filePath),
+                    ]);
                     const info = await infoRes.json();
 
                     document.getElementById('modal-filename').textContent = info.name || filePath;
                     document.getElementById('modal-badge').textContent = (info.extension || '').replace('.', '').toUpperCase();
                     document.getElementById('modal-icon').textContent = FILE_ICONS[info.type] || '📄';
+                    _currentFileType = info.type;
+
+                    // Show version nav if history exists
+                    updateVersionNav();
 
                     if (!info.exists) {
                         body.innerHTML = `
@@ -1569,6 +1803,7 @@
                         <div class="file-not-found-text">File not found (output not yet generated?)</div>
                         <div class="file-not-found-path">${filePath}</div>
                     </div>`;
+                        // Even if current doesn't exist, user can navigate to older versions
                         return;
                     }
 

@@ -49,7 +49,7 @@ def update_dvc_yaml(project_dir: Path) -> None:
     expected_hasher = {
         "cmd": "dvc-viewer hash",
         "always_changed": True,
-        "outs": [".dvc-viewer/hashes"]
+        "outs": [{".dvc-viewer/hashes": {"cache": False}}],
     }
     
     # Check if we need to add/update the hasher stage

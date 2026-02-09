@@ -19,7 +19,94 @@ from typing import Set, Tuple
 logger = logging.getLogger("dvc_viewer.hasher")
 
 # Extensions to track if found in strings (potential dynamic dependencies)
-SENSITIVE_EXTENSIONS = {".py", ".yaml", ".yml", ".json", ".sh"}
+SENSITIVE_EXTENSIONS = {
+    ".py", ".yaml", ".yml", ".json", ".sh", ".bash",
+    ".r", ".R", ".pl", ".rb", ".js", ".ts", ".sql", ".lua",
+    ".cfg", ".ini", ".toml", ".conf", ".csv", ".tsv",
+}
+
+# Functions that execute external commands
+_SUBPROCESS_FUNCS = {
+    # subprocess module
+    "run", "call", "check_call", "check_output", "Popen",
+    # os module
+    "system", "popen",
+}
+
+# Attribute chains that indicate subprocess/os calls
+_SUBPROCESS_MODULES = {"subprocess", "os"}
+
+
+def _extract_subprocess_file_refs(call_node: ast.Call) -> list[str]:
+    """
+    Extract file-like references from subprocess/os.system calls.
+
+    Detects patterns like:
+        subprocess.run(["bash", "scripts/process.sh", ...])
+        subprocess.run("./run.sh arg1 arg2")
+        os.system("python train.py --epochs 10")
+        subprocess.call(["sh", "-c", "echo hello"])
+    """
+    func = call_node.func
+    is_subprocess = False
+
+    # Check for module.function pattern (subprocess.run, os.system, etc.)
+    if isinstance(func, ast.Attribute) and func.attr in _SUBPROCESS_FUNCS:
+        if isinstance(func.value, ast.Name) and func.value.id in _SUBPROCESS_MODULES:
+            is_subprocess = True
+
+    if not is_subprocess:
+        return []
+
+    refs = []
+    args = call_node.args
+
+    if not args:
+        return refs
+
+    first_arg = args[0]
+
+    # Case 1: String command — e.g. subprocess.run("python train.py --lr 0.01")
+    if isinstance(first_arg, (ast.Str, ast.Constant)):
+        val = getattr(first_arg, "s", None) if isinstance(first_arg, ast.Str) else getattr(first_arg, "value", None)
+        if isinstance(val, str):
+            # Split the command string and check each token for file-like patterns
+            for token in val.split():
+                token = token.strip("'\"")
+                if _looks_like_file(token):
+                    refs.append(token)
+
+    # Case 2: List command — e.g. subprocess.run(["python", "scripts/train.py", ...])
+    elif isinstance(first_arg, ast.List):
+        for elt in first_arg.elts:
+            if isinstance(elt, (ast.Str, ast.Constant)):
+                val = getattr(elt, "s", None) if isinstance(elt, ast.Str) else getattr(elt, "value", None)
+                if isinstance(val, str) and _looks_like_file(val):
+                    refs.append(val)
+
+    return refs
+
+
+def _looks_like_file(token: str) -> bool:
+    """Check if a token looks like a file path (has extension or path separator)."""
+    if len(token) < 2 or len(token) > 255:
+        return False
+    # Skip common non-file tokens
+    if token in ("python", "python3", "bash", "sh", "zsh", "perl", "ruby", "node",
+                 "dvc", "git", "echo", "cat", "ls", "cd", "cp", "mv", "rm", "mkdir",
+                 "-c", "-e", "-m", "--", "-"):
+        return False
+    # Check for file-like patterns
+    if any(token.endswith(ext) for ext in SENSITIVE_EXTENSIONS):
+        return True
+    if "/" in token and not token.startswith("-"):
+        return True
+    if "." in token and not token.startswith("-") and " " not in token:
+        # Has a dot, could be a file — but skip things like --flag=value
+        suffix = "." + token.rsplit(".", 1)[-1] if "." in token else ""
+        if suffix in SENSITIVE_EXTENSIONS:
+            return True
+    return False
 
 # Caches to avoid re-parsing
 _DEPENDENCY_CACHE: dict[Path, set[Path]] = {}
@@ -141,6 +228,11 @@ def find_transitive_dependencies(entry_path: Path, project_root: Path) -> set[Pa
                     if isinstance(val, str) and 2 < len(val) < 255 and "\n" not in val:
                         if any(val.endswith(ext) for ext in SENSITIVE_EXTENSIONS) or "/" in val:
                             string_paths.add(val)
+                # 3. subprocess.run/call/Popen, os.system/popen — extract file refs
+                elif isinstance(node, ast.Call):
+                    refs = _extract_subprocess_file_refs(node)
+                    for ref in refs:
+                        string_paths.add(ref)
 
             # Resolve Absolute Imports
             for mod in abs_imports:
