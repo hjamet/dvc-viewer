@@ -206,6 +206,8 @@
         /* ─── Sidebar ─── */
         .sidebar {
             width: 380px;
+            min-width: 260px;
+            max-width: 60vw;
             background: var(--bg-card);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
@@ -214,6 +216,24 @@
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
             flex-direction: column;
+            position: relative;
+        }
+
+        .sidebar-resize-handle {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 6px;
+            cursor: col-resize;
+            z-index: 10;
+            background: transparent;
+            transition: background 0.15s ease;
+        }
+
+        .sidebar-resize-handle:hover,
+        .sidebar-resize-handle.active {
+            background: var(--accent);
         }
 
         .sidebar.collapsed {
@@ -973,8 +993,8 @@
         /* ─── Sidebar Execution Logs ─── */
         .sidebar-logs {
             margin-top: 12px;
+            padding: 16px 20px;
             border-top: 1px solid var(--border);
-            padding-top: 12px;
         }
 
         .sidebar-logs-header {
@@ -1188,6 +1208,7 @@
 
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
+            <div class="sidebar-resize-handle" id="sidebar-resize"></div>
             <div class="sidebar-empty" id="sidebar-empty">
                 <div class="sidebar-empty-icon">🎯</div>
                 <div class="sidebar-empty-text">
@@ -1997,6 +2018,7 @@
             let selectedStage = null;
             let isRunning = false;
             let stageLogs = {};  // {stageId: 'log lines...'}
+            let _errorStages = new Set();  // stages that failed — keep red until next run
 
             // Toast helpers
             function showToast(text, type = 'running') {
@@ -2024,28 +2046,37 @@
                 node.scratch('_origGlow', node.data('glowColor'));
                 node.scratch('_animating', true);
 
+                // Immediately set a vivid running color
+                node.data('bgColor', 'rgba(34, 211, 238, 0.12)');
+                node.data('borderColor', '#22d3ee');
+                node.data('glowColor', 'rgba(34, 211, 238, 0.7)');
+
                 function pulse() {
                     if (!node.scratch('_animating')) return;
                     node.animate({
                         style: {
-                            'border-color': '#818cf8',
-                            'shadow-color': 'rgba(129, 140, 248, 0.8)',
-                            'shadow-blur': 30,
-                            'shadow-opacity': 0.9,
+                            'background-color': 'rgba(34, 211, 238, 0.18)',
+                            'border-color': '#22d3ee',
+                            'border-width': 3,
+                            'shadow-color': 'rgba(34, 211, 238, 0.9)',
+                            'shadow-blur': 40,
+                            'shadow-opacity': 1,
                         },
                     }, {
-                        duration: 800,
+                        duration: 700,
                         complete: () => {
                             if (!node.scratch('_animating')) return;
                             node.animate({
                                 style: {
-                                    'border-color': '#6366f1',
-                                    'shadow-color': 'rgba(99, 102, 241, 0.3)',
+                                    'background-color': 'rgba(34, 211, 238, 0.06)',
+                                    'border-color': '#06b6d4',
+                                    'border-width': 2,
+                                    'shadow-color': 'rgba(6, 182, 212, 0.3)',
                                     'shadow-blur': 15,
                                     'shadow-opacity': 0.4,
                                 },
                             }, {
-                                duration: 800,
+                                duration: 700,
                                 complete: pulse,
                             });
                         },
@@ -2066,7 +2097,9 @@
                     const sc = STATE_COLORS.valid;
                     node.data({ bgColor: sc.bg, borderColor: sc.border, glowColor: sc.glow });
                     node.style({
+                        'background-color': sc.bg,
                         'border-color': sc.border,
+                        'border-width': 2,
                         'shadow-color': sc.glow,
                         'shadow-blur': 20,
                         'shadow-opacity': 0.6,
@@ -2079,7 +2112,9 @@
                         glowColor: 'rgba(239, 68, 68, 0.6)',
                     });
                     node.style({
+                        'background-color': 'rgba(239, 68, 68, 0.15)',
                         'border-color': '#ef4444',
+                        'border-width': 2,
                         'shadow-color': 'rgba(239, 68, 68, 0.6)',
                         'shadow-blur': 20,
                         'shadow-opacity': 0.8,
@@ -2098,7 +2133,8 @@
                 stageBtn.classList.add('running');
                 stageBtn.disabled = true;
 
-                // Clear previous logs for stages that will run
+                // Clear previous logs and error states
+                _errorStages.clear();
                 if (!stage) {
                     stageLogs = {};  // Clear all when running full pipeline
                 } else {
@@ -2180,6 +2216,7 @@
                                 if (!data.success) {
                                     pipelineSuccess = false;
                                     failedStage = data.stage;
+                                    _errorStages.add(data.stage);
                                 }
                                 break;
 
@@ -2230,6 +2267,17 @@
                     for (const node of data.nodes) {
                         const cyNode = cy.getElementById(node.id);
                         if (cyNode.length) {
+                            // Skip color reset for error stages — keep them red
+                            if (_errorStages.has(node.id)) {
+                                cyNode.data({
+                                    state: node.state,
+                                    deps: node.deps,
+                                    outs: node.outs,
+                                    metrics: node.metrics,
+                                    plots: node.plots,
+                                });
+                                continue;
+                            }
                             const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
                             cyNode.data({
                                 state: node.state,
@@ -2267,6 +2315,39 @@
             });
 
             boot();
+
+            // ─── Sidebar resize ───
+            (function () {
+                const handle = document.getElementById('sidebar-resize');
+                const sidebar = document.getElementById('sidebar');
+                let startX, startW;
+
+                handle.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    startX = e.clientX;
+                    startW = sidebar.offsetWidth;
+                    handle.classList.add('active');
+                    sidebar.style.transition = 'none';
+
+                    function onMove(e) {
+                        const delta = startX - e.clientX;
+                        const newW = Math.min(Math.max(startW + delta, 260), window.innerWidth * 0.6);
+                        sidebar.style.width = newW + 'px';
+                    }
+
+                    function onUp() {
+                        handle.classList.remove('active');
+                        sidebar.style.transition = '';
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                        // Resize cytoscape
+                        if (cy) cy.resize();
+                    }
+
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                });
+            })();
         })();
     </script>
 </body>
