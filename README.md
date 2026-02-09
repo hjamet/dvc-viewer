@@ -16,7 +16,7 @@
 ## 🚀 Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<user>/dvc-viewer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hjamet/dvc-viewer/main/install.sh | bash
 ```
 
 This will:
@@ -27,7 +27,7 @@ This will:
 ## 📦 Manual Install
 
 ```bash
-git clone https://github.com/<user>/dvc-viewer.git ~/.dvc-viewer
+git clone https://github.com/hjamet/dvc-viewer.git ~/.dvc-viewer
 cd ~/.dvc-viewer
 python3 -m venv .venv
 source .venv/bin/activate
