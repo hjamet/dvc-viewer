@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,7 +14,9 @@
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
 
     <style>
         :root {
@@ -124,9 +127,20 @@
             box-shadow: 0 0 8px currentColor;
         }
 
-        .legend-dot.valid { background: var(--state-valid); color: var(--state-valid); }
-        .legend-dot.rerun { background: var(--state-rerun); color: var(--state-rerun); }
-        .legend-dot.never { background: var(--state-never); color: var(--state-never); }
+        .legend-dot.valid {
+            background: var(--state-valid);
+            color: var(--state-valid);
+        }
+
+        .legend-dot.rerun {
+            background: var(--state-rerun);
+            color: var(--state-rerun);
+        }
+
+        .legend-dot.never {
+            background: var(--state-never);
+            color: var(--state-never);
+        }
 
         /* ─── Main layout ─── */
         .main {
@@ -151,8 +165,8 @@
             position: absolute;
             inset: 0;
             background-image:
-                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
             background-size: 40px 40px;
             pointer-events: none;
         }
@@ -235,11 +249,13 @@
             color: var(--state-valid);
             box-shadow: 0 0 12px var(--state-valid-glow);
         }
+
         .state-badge.needs_rerun {
             background: var(--state-rerun-bg);
             color: var(--state-rerun);
             box-shadow: 0 0 12px var(--state-rerun-glow);
         }
+
         .state-badge.never_run {
             background: var(--state-never-bg);
             color: var(--state-never);
@@ -310,9 +326,17 @@
             font-size: 11px;
         }
 
-        .file-item.param::before { content: '⚙️ '; }
-        .file-item.metric::before { content: '📊 '; }
-        .file-item.plot::before { content: '📈 '; }
+        .file-item.param::before {
+            content: '⚙️ ';
+        }
+
+        .file-item.metric::before {
+            content: '📊 ';
+        }
+
+        .file-item.plot::before {
+            content: '📈 ';
+        }
 
         /* ─── Empty sidebar ─── */
         .sidebar-empty {
@@ -371,7 +395,9 @@
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         /* ─── Error state ─── */
@@ -387,9 +413,22 @@
             text-align: center;
         }
 
-        .error-icon { font-size: 56px; margin-bottom: 16px; }
-        .error-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
-        .error-message { font-size: 14px; color: var(--text-muted); max-width: 400px; }
+        .error-icon {
+            font-size: 56px;
+            margin-bottom: 16px;
+        }
+
+        .error-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .error-message {
+            font-size: 14px;
+            color: var(--text-muted);
+            max-width: 400px;
+        }
 
         /* ─── Tooltip on graph ─── */
         .cy-tooltip {
@@ -447,18 +486,318 @@
             color: var(--text-primary);
         }
 
+        /* ─── Clickable file items ─── */
+        .file-item.inspectable {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .file-item.inspectable::after {
+            content: '👁';
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 11px;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .file-item.inspectable:hover::after {
+            opacity: 1;
+        }
+
+        /* ─── Inspector Modal ─── */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 500;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .modal-overlay.visible {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            width: 90vw;
+            max-width: 1200px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+            overflow: hidden;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .modal-title {
+            font-size: 15px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-title-icon {
+            font-size: 18px;
+        }
+
+        .modal-file-badge {
+            font-size: 11px;
+            font-weight: 400;
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: var(--accent-glow);
+            color: var(--accent);
+            border: 1px solid var(--border-glow);
+            text-transform: uppercase;
+        }
+
+        .modal-close {
+            width: 32px;
+            height: 32px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+
+        .modal-close:hover {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+        }
+
+        .modal-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .modal-search {
+            flex: 1;
+            max-width: 300px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .modal-search:focus {
+            border-color: var(--border-glow);
+        }
+
+        .modal-search::placeholder {
+            color: var(--text-muted);
+        }
+
+        .modal-stats {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow: auto;
+            padding: 0;
+        }
+
+        /* ─── CSV Table ─── */
+        .csv-table-wrap {
+            overflow: auto;
+            max-height: 100%;
+        }
+
+        .csv-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .csv-table th {
+            position: sticky;
+            top: 0;
+            background: var(--bg-primary);
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            border-bottom: 2px solid var(--border);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            z-index: 10;
+        }
+
+        .csv-table th:hover {
+            color: var(--text-primary);
+        }
+
+        .csv-table th .sort-arrow {
+            margin-left: 4px;
+            font-size: 10px;
+            opacity: 0.4;
+        }
+
+        .csv-table th.sorted .sort-arrow {
+            opacity: 1;
+            color: var(--accent);
+        }
+
+        .csv-table td {
+            padding: 8px 14px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .csv-table tr:hover td {
+            background: var(--bg-glass);
+            color: var(--text-primary);
+        }
+
+        .csv-table td.numeric {
+            text-align: right;
+            color: var(--accent);
+        }
+
+        /* ─── Image viewer ─── */
+        .image-viewer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+            min-height: 300px;
+        }
+
+        .image-viewer img {
+            max-width: 100%;
+            max-height: 70vh;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        /* ─── PDF viewer ─── */
+        .pdf-viewer {
+            width: 100%;
+            height: 100%;
+            min-height: 70vh;
+        }
+
+        .pdf-viewer iframe {
+            width: 100%;
+            height: 70vh;
+            border: none;
+        }
+
+        /* ─── Text viewer ─── */
+        .text-viewer {
+            padding: 20px 24px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        /* ─── File not found ─── */
+        .file-not-found {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px;
+            text-align: center;
+        }
+
+        .file-not-found-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.4;
+        }
+
+        .file-not-found-text {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .file-not-found-path {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 8px;
+            padding: 6px 12px;
+            background: var(--bg-glass);
+            border-radius: 6px;
+        }
+
         /* ─── Scrollbar ─── */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
         ::-webkit-scrollbar-thumb {
             background: var(--border);
             border-radius: 3px;
         }
+
         ::-webkit-scrollbar-thumb:hover {
             background: var(--text-muted);
         }
     </style>
 </head>
+
 <body>
 
     <!-- Header -->
@@ -535,331 +874,556 @@
         </aside>
     </main>
 
-<script>
-(function() {
-    "use strict";
+    <!-- File Inspector Modal -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span class="modal-title-icon" id="modal-icon">📄</span>
+                    <span id="modal-filename">file.csv</span>
+                    <span class="modal-file-badge" id="modal-badge">CSV</span>
+                </div>
+                <button class="modal-close" id="modal-close">✕</button>
+            </div>
+            <div class="modal-toolbar" id="modal-toolbar" style="display: none;">
+                <input class="modal-search" id="modal-search" type="text" placeholder="Filter rows...">
+                <span class="modal-stats" id="modal-stats"></span>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
 
-    // ─── State colors ───
-    const STATE_COLORS = {
-        valid:      { bg: '#166534', border: '#22c55e', text: '#f0fdf4', glow: 'rgba(34,197,94,0.5)' },
-        needs_rerun:{ bg: '#78350f', border: '#f59e0b', text: '#fefce8', glow: 'rgba(245,158,11,0.5)' },
-        never_run:  { bg: '#1e293b', border: '#64748b', text: '#cbd5e1', glow: 'rgba(100,116,139,0.3)' },
-    };
+    <script>
+        (function () {
+            "use strict";
 
-    const STATE_LABELS = {
-        valid: 'Valid',
-        needs_rerun: 'Needs rerun',
-        never_run: 'Never run',
-    };
+            // ─── State colors ───
+            const STATE_COLORS = {
+                valid: { bg: '#166534', border: '#22c55e', text: '#f0fdf4', glow: 'rgba(34,197,94,0.5)' },
+                needs_rerun: { bg: '#78350f', border: '#f59e0b', text: '#fefce8', glow: 'rgba(245,158,11,0.5)' },
+                never_run: { bg: '#1e293b', border: '#64748b', text: '#cbd5e1', glow: 'rgba(100,116,139,0.3)' },
+            };
 
-    let cy = null;
+            const STATE_LABELS = {
+                valid: 'Valid',
+                needs_rerun: 'Needs rerun',
+                never_run: 'Never run',
+            };
 
-    // ─── Fetch pipeline data ───
-    async function fetchPipeline() {
-        const res = await fetch('/api/pipeline');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-    }
+            let cy = null;
 
-    // ─── Build Cytoscape elements ───
-    function buildElements(data) {
-        const elements = [];
-
-        for (const node of data.nodes) {
-            const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
-            elements.push({
-                group: 'nodes',
-                data: {
-                    id: node.id,
-                    label: node.id,
-                    state: node.state,
-                    cmd: node.cmd,
-                    deps: node.deps,
-                    outs: node.outs,
-                    params: node.params || [],
-                    metrics: node.metrics || [],
-                    plots: node.plots || [],
-                    bgColor: sc.bg,
-                    borderColor: sc.border,
-                    textColor: sc.text,
-                    glowColor: sc.glow,
-                },
-            });
-        }
-
-        for (const edge of data.edges) {
-            elements.push({
-                group: 'edges',
-                data: {
-                    id: `${edge.source}->${edge.target}`,
-                    source: edge.source,
-                    target: edge.target,
-                    label: edge.label || '',
-                },
-            });
-        }
-
-        return elements;
-    }
-
-    // ─── Init Cytoscape ───
-    function initGraph(elements) {
-        cy = cytoscape({
-            container: document.getElementById('cy'),
-            elements: elements,
-            layout: {
-                name: 'dagre',
-                rankDir: 'TB',
-                nodeSep: 60,
-                rankSep: 80,
-                edgeSep: 30,
-                padding: 50,
-                animate: true,
-                animationDuration: 600,
-                animationEasing: 'ease-out-cubic',
-            },
-            style: [
-                {
-                    selector: 'node',
-                    style: {
-                        'label': 'data(label)',
-                        'width': 'label',
-                        'height': 40,
-                        'padding': '16px',
-                        'shape': 'roundrectangle',
-                        'background-color': 'data(bgColor)',
-                        'border-width': 2,
-                        'border-color': 'data(borderColor)',
-                        'color': 'data(textColor)',
-                        'font-family': "'Inter', sans-serif",
-                        'font-size': 13,
-                        'font-weight': 500,
-                        'text-valign': 'center',
-                        'text-halign': 'center',
-                        'text-wrap': 'none',
-                        'transition-property': 'border-width, border-color, background-color',
-                        'transition-duration': '0.15s',
-                        'shadow-blur': 20,
-                        'shadow-color': 'data(glowColor)',
-                        'shadow-opacity': 0.6,
-                        'shadow-offset-x': 0,
-                        'shadow-offset-y': 4,
-                    },
-                },
-                {
-                    selector: 'node:active, node:selected',
-                    style: {
-                        'border-width': 3,
-                        'border-color': '#6366f1',
-                        'shadow-color': 'rgba(99, 102, 241, 0.6)',
-                        'shadow-blur': 30,
-                        'overlay-opacity': 0,
-                    },
-                },
-                {
-                    selector: 'node.hover',
-                    style: {
-                        'border-width': 3,
-                    },
-                },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': 2,
-                        'line-color': 'rgba(99, 102, 241, 0.35)',
-                        'target-arrow-color': 'rgba(99, 102, 241, 0.55)',
-                        'target-arrow-shape': 'triangle',
-                        'arrow-scale': 1.1,
-                        'curve-style': 'bezier',
-                        'transition-property': 'line-color, target-arrow-color, width',
-                        'transition-duration': '0.15s',
-                    },
-                },
-                {
-                    selector: 'edge:selected',
-                    style: {
-                        'width': 3,
-                        'line-color': 'rgba(99, 102, 241, 0.7)',
-                        'target-arrow-color': 'rgba(99, 102, 241, 0.9)',
-                    },
-                },
-                {
-                    selector: 'node.dimmed',
-                    style: {
-                        'opacity': 0.25,
-                    },
-                },
-                {
-                    selector: 'edge.dimmed',
-                    style: {
-                        'opacity': 0.12,
-                    },
-                },
-                {
-                    selector: 'node.highlighted',
-                    style: {
-                        'opacity': 1,
-                    },
-                },
-                {
-                    selector: 'edge.highlighted',
-                    style: {
-                        'opacity': 1,
-                        'width': 3,
-                        'line-color': 'rgba(99, 102, 241, 0.7)',
-                        'target-arrow-color': 'rgba(99, 102, 241, 0.9)',
-                    },
-                },
-            ],
-            minZoom: 0.2,
-            maxZoom: 3,
-            wheelSensitivity: 0.3,
-        });
-
-        // ─── Click on node → select & show detail ───
-        cy.on('tap', 'node', function(evt) {
-            const node = evt.target;
-            showDetail(node.data());
-            highlightNeighborhood(node);
-        });
-
-        // ─── Click on background → deselect ───
-        cy.on('tap', function(evt) {
-            if (evt.target === cy) {
-                clearDetail();
-                clearHighlight();
+            // ─── Fetch pipeline data ───
+            async function fetchPipeline() {
+                const res = await fetch('/api/pipeline');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
             }
-        });
 
-        // ─── Hover tooltip ───
-        const tooltip = document.getElementById('tooltip');
-        cy.on('mouseover', 'node', function(evt) {
-            const node = evt.target;
-            node.addClass('hover');
-            const pos = node.renderedPosition();
-            const container = document.getElementById('cy').getBoundingClientRect();
-            tooltip.textContent = `${node.data('label')} — ${STATE_LABELS[node.data('state')]}`;
-            tooltip.style.left = (pos.x) + 'px';
-            tooltip.style.top = (pos.y) + 'px';
-            tooltip.classList.add('visible');
-        });
+            // ─── Build Cytoscape elements ───
+            function buildElements(data) {
+                const elements = [];
 
-        cy.on('mouseout', 'node', function(evt) {
-            evt.target.removeClass('hover');
-            tooltip.classList.remove('visible');
-        });
+                for (const node of data.nodes) {
+                    const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
+                    elements.push({
+                        group: 'nodes',
+                        data: {
+                            id: node.id,
+                            label: node.id,
+                            state: node.state,
+                            cmd: node.cmd,
+                            deps: node.deps,
+                            outs: node.outs,
+                            params: node.params || [],
+                            metrics: node.metrics || [],
+                            plots: node.plots || [],
+                            bgColor: sc.bg,
+                            borderColor: sc.border,
+                            textColor: sc.text,
+                            glowColor: sc.glow,
+                        },
+                    });
+                }
 
-        // ─── Controls ───
-        document.getElementById('btn-fit').addEventListener('click', () => {
-            cy.fit(undefined, 50);
-        });
-        document.getElementById('btn-zoom-in').addEventListener('click', () => {
-            cy.zoom({ level: cy.zoom() * 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 }});
-        });
-        document.getElementById('btn-zoom-out').addEventListener('click', () => {
-            cy.zoom({ level: cy.zoom() / 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 }});
-        });
+                for (const edge of data.edges) {
+                    elements.push({
+                        group: 'edges',
+                        data: {
+                            id: `${edge.source}->${edge.target}`,
+                            source: edge.source,
+                            target: edge.target,
+                            label: edge.label || '',
+                        },
+                    });
+                }
 
-        return cy;
-    }
-
-    // ─── Highlight neighborhood ───
-    function highlightNeighborhood(node) {
-        cy.elements().addClass('dimmed');
-        const neighborhood = node.neighborhood().add(node);
-        neighborhood.removeClass('dimmed').addClass('highlighted');
-    }
-
-    function clearHighlight() {
-        cy.elements().removeClass('dimmed highlighted');
-    }
-
-    // ─── Sidebar detail ───
-    function showDetail(data) {
-        document.getElementById('sidebar-empty').style.display = 'none';
-        const detail = document.getElementById('sidebar-detail');
-        detail.style.display = 'block';
-
-        document.getElementById('detail-name').textContent = data.id;
-
-        const badge = document.getElementById('detail-badge');
-        badge.textContent = STATE_LABELS[data.state];
-        badge.className = 'state-badge ' + data.state;
-
-        document.getElementById('detail-cmd').textContent = data.cmd || '(no command)';
-
-        const sections = document.getElementById('detail-sections');
-        sections.innerHTML = '';
-
-        const addSection = (title, items, cls = '') => {
-            if (!items || items.length === 0) return;
-            const sec = document.createElement('div');
-            sec.className = 'sidebar-section';
-            sec.innerHTML = `<div class="section-title">${title}</div>`;
-            const ul = document.createElement('ul');
-            ul.className = 'file-list';
-            for (const item of items) {
-                const li = document.createElement('li');
-                li.className = 'file-item' + (cls ? ' ' + cls : '');
-                li.textContent = item;
-                ul.appendChild(li);
+                return elements;
             }
-            sec.appendChild(ul);
-            sections.appendChild(sec);
-        };
 
-        addSection('Dependencies', data.deps);
-        addSection('Outputs', data.outs);
-        addSection('Parameters', data.params, 'param');
-        addSection('Metrics', data.metrics, 'metric');
-        addSection('Plots', data.plots, 'plot');
-    }
+            // ─── Init Cytoscape ───
+            function initGraph(elements) {
+                cy = cytoscape({
+                    container: document.getElementById('cy'),
+                    elements: elements,
+                    layout: {
+                        name: 'dagre',
+                        rankDir: 'TB',
+                        nodeSep: 60,
+                        rankSep: 80,
+                        edgeSep: 30,
+                        padding: 50,
+                        animate: true,
+                        animationDuration: 600,
+                        animationEasing: 'ease-out-cubic',
+                    },
+                    style: [
+                        {
+                            selector: 'node',
+                            style: {
+                                'label': 'data(label)',
+                                'width': 'label',
+                                'height': 40,
+                                'padding': '16px',
+                                'shape': 'roundrectangle',
+                                'background-color': 'data(bgColor)',
+                                'border-width': 2,
+                                'border-color': 'data(borderColor)',
+                                'color': 'data(textColor)',
+                                'font-family': "'Inter', sans-serif",
+                                'font-size': 13,
+                                'font-weight': 500,
+                                'text-valign': 'center',
+                                'text-halign': 'center',
+                                'text-wrap': 'none',
+                                'transition-property': 'border-width, border-color, background-color',
+                                'transition-duration': '0.15s',
+                                'shadow-blur': 20,
+                                'shadow-color': 'data(glowColor)',
+                                'shadow-opacity': 0.6,
+                                'shadow-offset-x': 0,
+                                'shadow-offset-y': 4,
+                            },
+                        },
+                        {
+                            selector: 'node:active, node:selected',
+                            style: {
+                                'border-width': 3,
+                                'border-color': '#6366f1',
+                                'shadow-color': 'rgba(99, 102, 241, 0.6)',
+                                'shadow-blur': 30,
+                                'overlay-opacity': 0,
+                            },
+                        },
+                        {
+                            selector: 'node.hover',
+                            style: {
+                                'border-width': 3,
+                            },
+                        },
+                        {
+                            selector: 'edge',
+                            style: {
+                                'width': 2,
+                                'line-color': 'rgba(99, 102, 241, 0.35)',
+                                'target-arrow-color': 'rgba(99, 102, 241, 0.55)',
+                                'target-arrow-shape': 'triangle',
+                                'arrow-scale': 1.1,
+                                'curve-style': 'bezier',
+                                'transition-property': 'line-color, target-arrow-color, width',
+                                'transition-duration': '0.15s',
+                            },
+                        },
+                        {
+                            selector: 'edge:selected',
+                            style: {
+                                'width': 3,
+                                'line-color': 'rgba(99, 102, 241, 0.7)',
+                                'target-arrow-color': 'rgba(99, 102, 241, 0.9)',
+                            },
+                        },
+                        {
+                            selector: 'node.dimmed',
+                            style: {
+                                'opacity': 0.25,
+                            },
+                        },
+                        {
+                            selector: 'edge.dimmed',
+                            style: {
+                                'opacity': 0.12,
+                            },
+                        },
+                        {
+                            selector: 'node.highlighted',
+                            style: {
+                                'opacity': 1,
+                            },
+                        },
+                        {
+                            selector: 'edge.highlighted',
+                            style: {
+                                'opacity': 1,
+                                'width': 3,
+                                'line-color': 'rgba(99, 102, 241, 0.7)',
+                                'target-arrow-color': 'rgba(99, 102, 241, 0.9)',
+                            },
+                        },
+                    ],
+                    minZoom: 0.2,
+                    maxZoom: 3,
+                    wheelSensitivity: 0.3,
+                });
 
-    function clearDetail() {
-        document.getElementById('sidebar-empty').style.display = 'flex';
-        document.getElementById('sidebar-detail').style.display = 'none';
-    }
+                // ─── Click on node → select & show detail ───
+                cy.on('tap', 'node', function (evt) {
+                    const node = evt.target;
+                    showDetail(node.data());
+                    highlightNeighborhood(node);
+                });
 
-    // ─── Stats bar ───
-    function updateStats(data) {
-        const counts = { valid: 0, needs_rerun: 0, never_run: 0 };
-        for (const n of data.nodes) counts[n.state]++;
+                // ─── Click on background → deselect ───
+                cy.on('tap', function (evt) {
+                    if (evt.target === cy) {
+                        clearDetail();
+                        clearHighlight();
+                    }
+                });
 
-        const bar = document.getElementById('stats-bar');
-        bar.innerHTML = `
+                // ─── Hover tooltip ───
+                const tooltip = document.getElementById('tooltip');
+                cy.on('mouseover', 'node', function (evt) {
+                    const node = evt.target;
+                    node.addClass('hover');
+                    const pos = node.renderedPosition();
+                    const container = document.getElementById('cy').getBoundingClientRect();
+                    tooltip.textContent = `${node.data('label')} — ${STATE_LABELS[node.data('state')]}`;
+                    tooltip.style.left = (pos.x) + 'px';
+                    tooltip.style.top = (pos.y) + 'px';
+                    tooltip.classList.add('visible');
+                });
+
+                cy.on('mouseout', 'node', function (evt) {
+                    evt.target.removeClass('hover');
+                    tooltip.classList.remove('visible');
+                });
+
+                // ─── Controls ───
+                document.getElementById('btn-fit').addEventListener('click', () => {
+                    cy.fit(undefined, 50);
+                });
+                document.getElementById('btn-zoom-in').addEventListener('click', () => {
+                    cy.zoom({ level: cy.zoom() * 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+                });
+                document.getElementById('btn-zoom-out').addEventListener('click', () => {
+                    cy.zoom({ level: cy.zoom() / 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+                });
+
+                return cy;
+            }
+
+            // ─── Highlight neighborhood ───
+            function highlightNeighborhood(node) {
+                cy.elements().addClass('dimmed');
+                const neighborhood = node.neighborhood().add(node);
+                neighborhood.removeClass('dimmed').addClass('highlighted');
+            }
+
+            function clearHighlight() {
+                cy.elements().removeClass('dimmed highlighted');
+            }
+
+            // ─── Sidebar detail ───
+            function showDetail(data) {
+                document.getElementById('sidebar-empty').style.display = 'none';
+                const detail = document.getElementById('sidebar-detail');
+                detail.style.display = 'block';
+
+                document.getElementById('detail-name').textContent = data.id;
+
+                const badge = document.getElementById('detail-badge');
+                badge.textContent = STATE_LABELS[data.state];
+                badge.className = 'state-badge ' + data.state;
+
+                document.getElementById('detail-cmd').textContent = data.cmd || '(no command)';
+
+                const sections = document.getElementById('detail-sections');
+                sections.innerHTML = '';
+
+                const INSPECTABLE_EXTS = ['.csv', '.tsv', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.pdf', '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.jsonl'];
+                const isInspectable = (path) => INSPECTABLE_EXTS.some(ext => path.toLowerCase().endsWith(ext));
+
+                const addSection = (title, items, cls = '', clickable = false) => {
+                    if (!items || items.length === 0) return;
+                    const sec = document.createElement('div');
+                    sec.className = 'sidebar-section';
+                    sec.innerHTML = `<div class="section-title">${title}</div>`;
+                    const ul = document.createElement('ul');
+                    ul.className = 'file-list';
+                    for (const item of items) {
+                        const li = document.createElement('li');
+                        const canInspect = clickable && isInspectable(item);
+                        li.className = 'file-item' + (cls ? ' ' + cls : '') + (canInspect ? ' inspectable' : '');
+                        li.textContent = item;
+                        if (canInspect) {
+                            li.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                openFileInspector(item);
+                            });
+                        }
+                        ul.appendChild(li);
+                    }
+                    sec.appendChild(ul);
+                    sections.appendChild(sec);
+                };
+
+                addSection('Dependencies', data.deps);
+                addSection('Outputs', data.outs, '', true);
+                addSection('Parameters', data.params, 'param');
+                addSection('Metrics', data.metrics, 'metric', true);
+                addSection('Plots', data.plots, 'plot', true);
+            }
+
+            function clearDetail() {
+                document.getElementById('sidebar-empty').style.display = 'flex';
+                document.getElementById('sidebar-detail').style.display = 'none';
+            }
+
+            // ─── Stats bar ───
+            function updateStats(data) {
+                const counts = { valid: 0, needs_rerun: 0, never_run: 0 };
+                for (const n of data.nodes) counts[n.state]++;
+
+                const bar = document.getElementById('stats-bar');
+                bar.innerHTML = `
             <div class="stat-chip"><span class="count">${data.nodes.length}</span> stages</div>
             <div class="stat-chip"><span class="count">${data.edges.length}</span> edges</div>
             <div class="stat-chip"><span class="count" style="color: var(--state-valid)">${counts.valid}</span> valid</div>
             <div class="stat-chip"><span class="count" style="color: var(--state-rerun)">${counts.needs_rerun}</span> needs rerun</div>
             <div class="stat-chip"><span class="count" style="color: var(--state-never)">${counts.never_run}</span> never run</div>
         `;
-    }
+            }
 
-    // ─── Boot ───
-    async function boot() {
-        const loading = document.getElementById('loading');
-        try {
-            const data = await fetchPipeline();
-            if (data.error) throw new Error(data.error);
+            // ─── Boot ───
+            async function boot() {
+                const loading = document.getElementById('loading');
+                try {
+                    const data = await fetchPipeline();
+                    if (data.error) throw new Error(data.error);
 
-            const elements = buildElements(data);
-            initGraph(elements);
-            updateStats(data);
+                    const elements = buildElements(data);
+                    initGraph(elements);
+                    updateStats(data);
 
-            setTimeout(() => loading.classList.add('hidden'), 400);
-        } catch (err) {
-            loading.innerHTML = `
+                    setTimeout(() => loading.classList.add('hidden'), 400);
+                } catch (err) {
+                    loading.innerHTML = `
                 <div class="error-container">
                     <div class="error-icon">💥</div>
                     <div class="error-title">Failed to load pipeline</div>
                     <div class="error-message">${err.message}</div>
                 </div>
             `;
-        }
-    }
+                }
+            }
 
-    boot();
-})();
-</script>
+            // ─── File Inspector ───
+            const FILE_ICONS = {
+                csv: '📊', image: '🖼️', pdf: '📕', text: '📄', binary: '📦',
+            };
+
+            async function openFileInspector(filePath) {
+                const overlay = document.getElementById('modal-overlay');
+                const body = document.getElementById('modal-body');
+                const toolbar = document.getElementById('modal-toolbar');
+                const search = document.getElementById('modal-search');
+
+                // Reset
+                body.innerHTML = '<div class="loading-overlay" style="position:relative;min-height:200px;"><div class="loading-spinner"></div></div>';
+                toolbar.style.display = 'none';
+                search.value = '';
+                overlay.classList.add('visible');
+
+                // Get file info
+                try {
+                    const infoRes = await fetch(`/api/file/info?path=${encodeURIComponent(filePath)}`);
+                    const info = await infoRes.json();
+
+                    document.getElementById('modal-filename').textContent = info.name || filePath;
+                    document.getElementById('modal-badge').textContent = (info.extension || '').replace('.', '').toUpperCase();
+                    document.getElementById('modal-icon').textContent = FILE_ICONS[info.type] || '📄';
+
+                    if (!info.exists) {
+                        body.innerHTML = `
+                    <div class="file-not-found">
+                        <div class="file-not-found-icon">🔍</div>
+                        <div class="file-not-found-text">File not found (output not yet generated?)</div>
+                        <div class="file-not-found-path">${filePath}</div>
+                    </div>`;
+                        return;
+                    }
+
+                    switch (info.type) {
+                        case 'csv': await renderCSV(filePath); break;
+                        case 'image': renderImage(filePath); break;
+                        case 'pdf': renderPDF(filePath); break;
+                        case 'text': await renderText(filePath); break;
+                        default:
+                            body.innerHTML = `
+                        <div class="file-not-found">
+                            <div class="file-not-found-icon">📦</div>
+                            <div class="file-not-found-text">Binary file — preview not available</div>
+                            <div class="file-not-found-path">${filePath}</div>
+                        </div>`;
+                    }
+                } catch (err) {
+                    body.innerHTML = `
+                <div class="file-not-found">
+                    <div class="file-not-found-icon">💥</div>
+                    <div class="file-not-found-text">Error loading file: ${err.message}</div>
+                </div>`;
+                }
+            }
+
+            // ─── CSV Renderer ───
+            let _csvData = null;
+            let _csvSortCol = null;
+            let _csvSortAsc = true;
+
+            async function renderCSV(filePath) {
+                const body = document.getElementById('modal-body');
+                const toolbar = document.getElementById('modal-toolbar');
+                const search = document.getElementById('modal-search');
+                const stats = document.getElementById('modal-stats');
+
+                const res = await fetch(`/api/file/csv?path=${encodeURIComponent(filePath)}`);
+                _csvData = await res.json();
+                _csvSortCol = null;
+                _csvSortAsc = true;
+
+                toolbar.style.display = 'flex';
+                stats.textContent = `${_csvData.total} rows × ${_csvData.columns.length} cols`;
+
+                // Wire up search
+                search.oninput = () => renderCSVTable(search.value.toLowerCase());
+                renderCSVTable('');
+            }
+
+            function renderCSVTable(filter) {
+                const body = document.getElementById('modal-body');
+                let rows = _csvData.rows;
+
+                // Filter
+                if (filter) {
+                    rows = rows.filter(row =>
+                        Object.values(row).some(v => (v || '').toLowerCase().includes(filter))
+                    );
+                }
+
+                // Sort
+                if (_csvSortCol !== null) {
+                    const col = _csvData.columns[_csvSortCol];
+                    rows = [...rows].sort((a, b) => {
+                        let va = a[col] || '', vb = b[col] || '';
+                        const na = parseFloat(va), nb = parseFloat(vb);
+                        if (!isNaN(na) && !isNaN(nb)) return _csvSortAsc ? na - nb : nb - na;
+                        return _csvSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+                    });
+                }
+
+                const isNumeric = (val) => val !== '' && !isNaN(parseFloat(val));
+
+                let html = '<div class="csv-table-wrap"><table class="csv-table"><thead><tr>';
+                _csvData.columns.forEach((col, i) => {
+                    const sorted = _csvSortCol === i;
+                    const arrow = sorted ? (_csvSortAsc ? '▲' : '▼') : '▲';
+                    html += `<th class="${sorted ? 'sorted' : ''}" data-col="${i}">${col}<span class="sort-arrow">${arrow}</span></th>`;
+                });
+                html += '</tr></thead><tbody>';
+
+                const displayRows = rows.slice(0, 500); // Cap display at 500
+                for (const row of displayRows) {
+                    html += '<tr>';
+                    for (const col of _csvData.columns) {
+                        const val = row[col] || '';
+                        html += `<td class="${isNumeric(val) ? 'numeric' : ''}">${val}</td>`;
+                    }
+                    html += '</tr>';
+                }
+                html += '</tbody></table></div>';
+
+                if (rows.length > 500) {
+                    html += `<div style="padding:12px 24px;font-size:12px;color:var(--text-muted);">Showing 500 of ${rows.length} rows</div>`;
+                }
+
+                body.innerHTML = html;
+
+                // Update stats
+                document.getElementById('modal-stats').textContent =
+                    filter ? `${rows.length} of ${_csvData.total} rows` : `${_csvData.total} rows × ${_csvData.columns.length} cols`;
+
+                // Wire sort clicks
+                body.querySelectorAll('.csv-table th').forEach(th => {
+                    th.addEventListener('click', () => {
+                        const col = parseInt(th.dataset.col);
+                        if (_csvSortCol === col) _csvSortAsc = !_csvSortAsc;
+                        else { _csvSortCol = col; _csvSortAsc = true; }
+                        renderCSVTable(document.getElementById('modal-search').value.toLowerCase());
+                    });
+                });
+            }
+
+            // ─── Image Renderer ───
+            function renderImage(filePath) {
+                const body = document.getElementById('modal-body');
+                body.innerHTML = `<div class="image-viewer"><img src="/api/file/raw?path=${encodeURIComponent(filePath)}" alt="${filePath}"></div>`;
+            }
+
+            // ─── PDF Renderer ───
+            function renderPDF(filePath) {
+                const body = document.getElementById('modal-body');
+                body.innerHTML = `<div class="pdf-viewer"><iframe src="/api/file/raw?path=${encodeURIComponent(filePath)}"></iframe></div>`;
+            }
+
+            // ─── Text Renderer ───
+            async function renderText(filePath) {
+                const body = document.getElementById('modal-body');
+                const res = await fetch(`/api/file/text?path=${encodeURIComponent(filePath)}`);
+                const data = await res.json();
+
+                if (filePath.endsWith('.json')) {
+                    try {
+                        const parsed = JSON.parse(data.content);
+                        body.innerHTML = `<div class="text-viewer">${JSON.stringify(parsed, null, 2)}</div>`;
+                    } catch {
+                        body.innerHTML = `<div class="text-viewer">${escapeHtml(data.content)}</div>`;
+                    }
+                } else {
+                    body.innerHTML = `<div class="text-viewer">${escapeHtml(data.content)}</div>`;
+                }
+            }
+
+            function escapeHtml(str) {
+                return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            // ─── Modal close ───
+            document.getElementById('modal-close').addEventListener('click', () => {
+                document.getElementById('modal-overlay').classList.remove('visible');
+            });
+            document.getElementById('modal-overlay').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) {
+                    document.getElementById('modal-overlay').classList.remove('visible');
+                }
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    document.getElementById('modal-overlay').classList.remove('visible');
+                }
+            });
+
+            boot();
+        })();
+    </script>
 </body>
+
 </html>
