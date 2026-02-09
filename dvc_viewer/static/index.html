@@ -2004,7 +2004,14 @@
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
                     document.getElementById('modal-overlay').classList.remove('visible');
-                    document.getElementById('log-panel').classList.remove('active');
+                    if (isRunning) {
+                        // During execution, Escape minimizes instead of closing
+                        const panel = document.getElementById('log-panel');
+                        panel.classList.add('minimized');
+                        document.getElementById('log-toggle').textContent = '▴';
+                    } else {
+                        document.getElementById('log-panel').classList.remove('active');
+                    }
                 }
             });
 
@@ -2109,8 +2116,12 @@
                 const label = stage ? `Stage: ${stage}` : 'Full Pipeline';
                 showLogPanel(label, 'running', 'RUNNING…', 'Executing pipeline… please wait.');
 
-                // Start pulsing animation on affected nodes
-                startNodeAnimation(stage);
+                // Disable close button during execution
+                document.getElementById('log-close').disabled = true;
+                document.getElementById('log-close').style.opacity = '0.3';
+
+                // Start pulsing animation on affected nodes (non-blocking)
+                try { startNodeAnimation(stage); } catch (e) { console.warn('Animation error:', e); }
 
                 // Auto-minimize after short delay so user can see the graph
                 setTimeout(() => {
@@ -2175,6 +2186,9 @@
                     allBtn.disabled = false;
                     stageBtn.classList.remove('running');
                     stageBtn.disabled = false;
+                    // Re-enable close button
+                    document.getElementById('log-close').disabled = false;
+                    document.getElementById('log-close').style.opacity = '1';
                 }
             }
 
@@ -2218,6 +2232,8 @@
 
             // Log panel events
             document.getElementById('log-close').addEventListener('click', () => {
+                // Don't allow closing during execution
+                if (isRunning) return;
                 document.getElementById('log-panel').classList.remove('active');
             });
             document.getElementById('log-toggle').addEventListener('click', (e) => {
