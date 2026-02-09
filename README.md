@@ -16,7 +16,7 @@
 ## 🚀 Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hjamet/dvc-viewer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hjamet/dvc-viewer/main/install.sh?v=123 | bash
 ```
 
 This will:
