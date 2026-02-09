@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import webbrowser
 from pathlib import Path
 
 
@@ -23,11 +22,6 @@ def main() -> None:
         type=int,
         default=8686,
         help="Port to serve the web interface on (default: 8686)",
-    )
-    parser.add_argument(
-        "--no-open",
-        action="store_true",
-        help="Don't auto-open the browser",
     )
     # Subcommand for internal hashing
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
@@ -61,17 +55,6 @@ def main() -> None:
     print(f"🔍 DVC Viewer — reading pipeline from {dvc_yaml}")
     print(f"🌐 Starting server at http://localhost:{args.port}")
     print("   Press Ctrl+C to stop.\n")
-
-    if not args.no_open:
-        # Open browser after a short delay (server needs to boot)
-        import threading
-
-        def _open_browser():
-            import time
-            time.sleep(1.0)
-            webbrowser.open(f"http://localhost:{args.port}")
-
-        threading.Thread(target=_open_browser, daemon=True).start()
 
     import uvicorn
     uvicorn.run(
