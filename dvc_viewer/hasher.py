@@ -1,0 +1,204 @@
+"""
+Code hashing module for change detection.
+
+Analyzes Python scripts to find transitive dependencies (imports, relative imports)
+and computes an aggregate hash. Adapted from the CLIMB Transitive Code Hasher.
+"""
+
+from __future__ import annotations
+
+import ast
+import hashlib
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Set, Tuple
+
+# Setup logging
+logger = logging.getLogger("dvc_viewer.hasher")
+
+# Extensions to track if found in strings (potential dynamic dependencies)
+SENSITIVE_EXTENSIONS = {".py", ".yaml", ".yml", ".json", ".sh"}
+
+# Caches to avoid re-parsing
+_DEPENDENCY_CACHE: dict[Path, set[Path]] = {}
+_AST_CACHE: dict[Path, ast.AST] = {}
+
+
+def get_ast(path: Path) -> ast.AST:
+    """Read and parse AST with caching."""
+    if path not in _AST_CACHE:
+        # Fail gracefully if file encoding is weird or file is missing
+        try:
+            content = path.read_text(encoding="utf-8")
+            _AST_CACHE[path] = ast.parse(content)
+        except Exception as e:
+            logger.warning(f"Failed to parse {path}: {e}")
+            _AST_CACHE[path] = ast.Module(body=[], type_ignores=[])
+    return _AST_CACHE[path]
+
+
+def resolve_absolute_import(module_name: str, roots: list[Path]) -> Path | None:
+    """Resolve an absolute module name to a file path using provided roots."""
+    parts = module_name.split(".")
+    for root in roots:
+        # Check for package/__init__.py
+        p_init = root.joinpath(*parts).joinpath("__init__.py")
+        if p_init.exists():
+            return p_init
+        # Check for module.py
+        p_mod = root.joinpath(*parts).with_suffix(".py")
+        if p_mod.exists():
+            return p_mod
+    return None
+
+
+def resolve_relative_import(current_file: Path, module_name: str, level: int) -> Path | None:
+    """Resolve a relative import (e.g. .utils or ..models)."""
+    parent = current_file.parent
+    for _ in range(level - 1):
+        if parent.parent == parent:  # Hit root
+            break
+        parent = parent.parent
+    
+    parts = module_name.split(".") if module_name else []
+    
+    # Check for module.py
+    p_mod = parent.joinpath(*parts).with_suffix(".py")
+    if p_mod.exists():
+        return p_mod
+    
+    # Check for package/__init__.py
+    p_init = parent.joinpath(*parts).joinpath("__init__.py")
+    if p_init.exists():
+        return p_init
+        
+    return None
+
+
+def extract_sys_path_additions(path: Path, project_root: Path) -> list[Path]:
+    """Detect sys.path adjustments to find extra source roots."""
+    new_roots = []
+    try:
+        tree = get_ast(path)
+    except Exception:
+        return new_roots
+
+    for node in ast.walk(tree):
+        # Look for sys.path.append(...) or sys.path.insert(...)
+        if isinstance(node, ast.Call):
+            if (isinstance(node.func, ast.Attribute) and 
+                node.func.attr in ("insert", "append") and 
+                isinstance(node.func.value, ast.Attribute) and 
+                node.func.value.attr == "path" and 
+                isinstance(node.func.value.value, ast.Name) and 
+                node.func.value.value.id == "sys"):
+                # Simplification: assume adding project root or source dir
+                # Real static analysis of the argument is hard
+                new_roots.append(project_root)
+                new_roots.append(project_root / "src")
+    return list(set(new_roots))
+
+
+def find_transitive_dependencies(entry_path: Path, project_root: Path) -> set[Path]:
+    """Recursive dependency discovery for Python scripts."""
+    entry_path = entry_path.resolve()
+    all_deps = {entry_path}
+    to_visit = [entry_path]
+    visited_in_this_run = {entry_path}
+    
+    base_roots = [project_root, project_root / "src"]
+    
+    while to_visit:
+        current_file = to_visit.pop()
+        
+        if current_file in _DEPENDENCY_CACHE:
+            immediate_deps = _DEPENDENCY_CACHE[current_file]
+        else:
+            immediate_deps = set()
+            local_roots = list(set(base_roots + extract_sys_path_additions(current_file, project_root)))
+            
+            abs_imports = set()
+            rel_imports = []
+            string_paths = set()
+            
+            tree = get_ast(current_file)
+            
+            for node in ast.walk(tree):
+                # 1. Imports
+                if isinstance(node, ast.Import):
+                    for n in node.names:
+                        abs_imports.add(n.name)
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level > 0:
+                        rel_imports.append((node.module or "", node.level))
+                    elif node.module:
+                        abs_imports.add(node.module)
+                # 2. Strings (potential file paths)
+                elif isinstance(node, (ast.Str, ast.Constant)):
+                    val = getattr(node, "s", None) if isinstance(node, ast.Str) else getattr(node, "value", None)
+                    if isinstance(val, str) and 2 < len(val) < 255 and "\n" not in val:
+                        if any(val.endswith(ext) for ext in SENSITIVE_EXTENSIONS) or "/" in val:
+                            string_paths.add(val)
+
+            # Resolve Absolute Imports
+            for mod in abs_imports:
+                path = resolve_absolute_import(mod, local_roots)
+                if path:
+                    immediate_deps.add(path.resolve())
+
+            # Resolve Relative Imports
+            for mod, level in rel_imports:
+                path = resolve_relative_import(current_file, mod, level)
+                if path:
+                    immediate_deps.add(path.resolve())
+
+            # Resolve String Paths (e.g. config filenames)
+            for s in string_paths:
+                # Try relative to current file and relative to project root
+                for base in [current_file.parent, project_root]:
+                    p = (base / s).resolve()
+                    try:
+                        if p.exists() and p.is_file():
+                            immediate_deps.add(p)
+                    except OSError:
+                        pass
+            
+            # Filter deps: must be within project, ignore hidden/venv
+            immediate_deps = {
+                p for p in immediate_deps 
+                if str(p).startswith(str(project_root)) and 
+                not any(x in str(p) for x in [".git", ".dvc", ".venv", "__pycache__", ".code_hash", ".dvc-viewer"])
+            }
+            _DEPENDENCY_CACHE[current_file] = immediate_deps
+
+        # Add new deps to visit
+        for p in immediate_deps:
+            if p not in visited_in_this_run:
+                all_deps.add(p)
+                visited_in_this_run.add(p)
+                if p.suffix == ".py":
+                    to_visit.append(p)
+                    
+    return all_deps
+
+
+def compute_aggregate_hash(file_paths: set[Path], project_root: Path) -> str:
+    """Compute an aggregate SHA256 hash of all file contents and relative paths."""
+    hasher = hashlib.sha256()
+    sorted_paths = sorted(list(file_paths))
+    
+    for path in sorted_paths:
+        try:
+            rel_path = path.relative_to(project_root)
+        except ValueError:
+            rel_path = path
+        
+        hasher.update(str(rel_path).encode("utf-8"))
+        try:
+            hasher.update(path.read_bytes())
+        except Exception as e:
+            logger.warning(f"Could not read {path}: {e}")
+            
+    return hasher.hexdigest()

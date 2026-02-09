@@ -29,7 +29,19 @@ def main() -> None:
         action="store_true",
         help="Don't auto-open the browser",
     )
+    # Subcommand for internal hashing
+    subparsers = parser.add_subparsers(dest="command", help="Subcommands")
+    hash_parser = subparsers.add_parser("hash", help="Compute hashes internal command")
+
     args = parser.parse_args()
+
+    # Handle hash command
+    if args.command == "hash":
+        project_dir = Path.cwd()
+        from .updater import update_dvc_yaml
+        # Just run the update logic (which computes hashes)
+        update_dvc_yaml(project_dir)
+        sys.exit(0)
 
     project_dir = Path.cwd()
     dvc_yaml = project_dir / "dvc.yaml"
@@ -38,6 +50,10 @@ def main() -> None:
         print("❌ No dvc.yaml found in the current directory.", file=sys.stderr)
         print("   Run this command from inside a DVC project.", file=sys.stderr)
         sys.exit(1)
+
+    # 1. Run the auto-updater to ensure hashes and dvc.yaml are consistent
+    from .updater import update_dvc_yaml
+    update_dvc_yaml(project_dir)
 
     # Set project dir for the server to pick up
     os.environ["DVC_VIEWER_PROJECT_DIR"] = str(project_dir)
