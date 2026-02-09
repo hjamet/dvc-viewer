@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dvc-viewer"
+version = "0.1.0"
+description = "A modern web-based visualization tool for DVC pipeline DAGs"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+dvc-viewer = "dvc_viewer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dvc_viewer*"]
+
+[tool.setuptools.package-data]
+dvc_viewer = ["static/**/*"]

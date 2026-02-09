@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DVC Viewer — Pipeline Visualization</title>
+    <meta name="description" content="Interactive DAG visualization for DVC pipelines">
+
+    <!-- Cytoscape.js + Dagre layout -->
+    <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: rgba(17, 24, 39, 0.8);
+            --bg-glass: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.06);
+            --border-glow: rgba(99, 102, 241, 0.3);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+
+            /* State colors */
+            --state-valid: #22c55e;
+            --state-valid-bg: rgba(34, 197, 94, 0.12);
+            --state-valid-glow: rgba(34, 197, 94, 0.4);
+            --state-rerun: #f59e0b;
+            --state-rerun-bg: rgba(245, 158, 11, 0.12);
+            --state-rerun-glow: rgba(245, 158, 11, 0.4);
+            --state-never: #64748b;
+            --state-never-bg: rgba(100, 116, 139, 0.12);
+            --state-never-glow: rgba(100, 116, 139, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ─── Header ─── */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            z-index: 100;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-logo {
+            font-size: 20px;
+            filter: drop-shadow(0 0 8px var(--accent-glow));
+        }
+
+        .header-title {
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .header-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        /* ─── Legend ─── */
+        .legend {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .legend-dot.valid { background: var(--state-valid); color: var(--state-valid); }
+        .legend-dot.rerun { background: var(--state-rerun); color: var(--state-rerun); }
+        .legend-dot.never { background: var(--state-never); color: var(--state-never); }
+
+        /* ─── Main layout ─── */
+        .main {
+            display: flex;
+            height: calc(100vh - 56px);
+            margin-top: 56px;
+        }
+
+        /* ─── Graph container ─── */
+        .graph-container {
+            flex: 1;
+            position: relative;
+            background:
+                radial-gradient(circle at 20% 30%, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(34, 197, 94, 0.03) 0%, transparent 50%),
+                var(--bg-primary);
+        }
+
+        /* Grid pattern */
+        .graph-container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+
+        #cy {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ─── Stats bar ─── */
+        .stats-bar {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .stat-chip {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-chip .count {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        /* ─── Sidebar ─── */
+        .sidebar {
+            width: 380px;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-left: 1px solid var(--border);
+            overflow-y: auto;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar.collapsed {
+            transform: translateX(100%);
+        }
+
+        .sidebar-header {
+            padding: 20px 20px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-stage-name {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .state-badge {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 3px 10px;
+            border-radius: 100px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .state-badge.valid {
+            background: var(--state-valid-bg);
+            color: var(--state-valid);
+            box-shadow: 0 0 12px var(--state-valid-glow);
+        }
+        .state-badge.needs_rerun {
+            background: var(--state-rerun-bg);
+            color: var(--state-rerun);
+            box-shadow: 0 0 12px var(--state-rerun-glow);
+        }
+        .state-badge.never_run {
+            background: var(--state-never-bg);
+            color: var(--state-never);
+        }
+
+        .sidebar-command {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            word-break: break-all;
+            margin-top: 8px;
+        }
+
+        /* ─── Sidebar sections ─── */
+        .sidebar-content {
+            padding: 0;
+            flex: 1;
+        }
+
+        .sidebar-section {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-section:last-child {
+            border-bottom: none;
+        }
+
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .file-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .file-item {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding: 6px 10px;
+            background: var(--bg-glass);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .file-item:hover {
+            background: var(--accent-glow);
+            border-color: var(--border-glow);
+            color: var(--text-primary);
+        }
+
+        .file-item::before {
+            content: '📄 ';
+            font-size: 11px;
+        }
+
+        .file-item.param::before { content: '⚙️ '; }
+        .file-item.metric::before { content: '📊 '; }
+        .file-item.plot::before { content: '📈 '; }
+
+        /* ─── Empty sidebar ─── */
+        .sidebar-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .sidebar-empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.4;
+        }
+
+        .sidebar-empty-text {
+            font-size: 14px;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+
+        /* ─── Loading state ─── */
+        .loading-overlay {
+            position: absolute;
+            inset: 0;
+            background: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .loading-text {
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ─── Error state ─── */
+        .error-container {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .error-icon { font-size: 56px; margin-bottom: 16px; }
+        .error-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+        .error-message { font-size: 14px; color: var(--text-muted); max-width: 400px; }
+
+        /* ─── Tooltip on graph ─── */
+        .cy-tooltip {
+            position: absolute;
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: var(--text-primary);
+            pointer-events: none;
+            z-index: 50;
+            white-space: nowrap;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transform: translate(-50%, -100%);
+            margin-top: -12px;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .cy-tooltip.visible {
+            opacity: 1;
+        }
+
+        /* ─── Fit button ─── */
+        .controls {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .ctrl-btn {
+            width: 36px;
+            height: 36px;
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+
+        .ctrl-btn:hover {
+            background: var(--accent-glow);
+            border-color: var(--border-glow);
+            color: var(--text-primary);
+        }
+
+        /* ─── Scrollbar ─── */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <span class="header-logo">🔍</span>
+            <div>
+                <div class="header-title">DVC Viewer</div>
+                <div class="header-subtitle">Pipeline Visualization</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="legend">
+                <div class="legend-item">
+                    <span class="legend-dot valid"></span>
+                    Valid
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot rerun"></span>
+                    Needs rerun
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot never"></span>
+                    Never run
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main -->
+    <main class="main">
+        <!-- Graph -->
+        <div class="graph-container">
+            <div id="cy"></div>
+
+            <!-- Controls -->
+            <div class="controls">
+                <button class="ctrl-btn" id="btn-fit" title="Fit to viewport">⊡</button>
+                <button class="ctrl-btn" id="btn-zoom-in" title="Zoom in">+</button>
+                <button class="ctrl-btn" id="btn-zoom-out" title="Zoom out">−</button>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-bar" id="stats-bar"></div>
+
+            <!-- Tooltip -->
+            <div class="cy-tooltip" id="tooltip"></div>
+
+            <!-- Loading -->
+            <div class="loading-overlay" id="loading">
+                <div class="loading-spinner"></div>
+                <div class="loading-text">Loading pipeline…</div>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-empty" id="sidebar-empty">
+                <div class="sidebar-empty-icon">🎯</div>
+                <div class="sidebar-empty-text">
+                    Click on a node to inspect<br>its details
+                </div>
+            </div>
+            <div id="sidebar-detail" style="display: none;">
+                <div class="sidebar-header">
+                    <div class="sidebar-stage-name">
+                        <span id="detail-name"></span>
+                        <span class="state-badge" id="detail-badge"></span>
+                    </div>
+                    <div class="sidebar-command" id="detail-cmd"></div>
+                </div>
+                <div class="sidebar-content" id="detail-sections"></div>
+            </div>
+        </aside>
+    </main>
+
+<script>
+(function() {
+    "use strict";
+
+    // ─── State colors ───
+    const STATE_COLORS = {
+        valid:      { bg: '#166534', border: '#22c55e', text: '#f0fdf4', glow: 'rgba(34,197,94,0.5)' },
+        needs_rerun:{ bg: '#78350f', border: '#f59e0b', text: '#fefce8', glow: 'rgba(245,158,11,0.5)' },
+        never_run:  { bg: '#1e293b', border: '#64748b', text: '#cbd5e1', glow: 'rgba(100,116,139,0.3)' },
+    };
+
+    const STATE_LABELS = {
+        valid: 'Valid',
+        needs_rerun: 'Needs rerun',
+        never_run: 'Never run',
+    };
+
+    let cy = null;
+
+    // ─── Fetch pipeline data ───
+    async function fetchPipeline() {
+        const res = await fetch('/api/pipeline');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    }
+
+    // ─── Build Cytoscape elements ───
+    function buildElements(data) {
+        const elements = [];
+
+        for (const node of data.nodes) {
+            const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
+            elements.push({
+                group: 'nodes',
+                data: {
+                    id: node.id,
+                    label: node.id,
+                    state: node.state,
+                    cmd: node.cmd,
+                    deps: node.deps,
+                    outs: node.outs,
+                    params: node.params || [],
+                    metrics: node.metrics || [],
+                    plots: node.plots || [],
+                    bgColor: sc.bg,
+                    borderColor: sc.border,
+                    textColor: sc.text,
+                    glowColor: sc.glow,
+                },
+            });
+        }
+
+        for (const edge of data.edges) {
+            elements.push({
+                group: 'edges',
+                data: {
+                    id: `${edge.source}->${edge.target}`,
+                    source: edge.source,
+                    target: edge.target,
+                    label: edge.label || '',
+                },
+            });
+        }
+
+        return elements;
+    }
+
+    // ─── Init Cytoscape ───
+    function initGraph(elements) {
+        cy = cytoscape({
+            container: document.getElementById('cy'),
+            elements: elements,
+            layout: {
+                name: 'dagre',
+                rankDir: 'TB',
+                nodeSep: 60,
+                rankSep: 80,
+                edgeSep: 30,
+                padding: 50,
+                animate: true,
+                animationDuration: 600,
+                animationEasing: 'ease-out-cubic',
+            },
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'label': 'data(label)',
+                        'width': 'label',
+                        'height': 40,
+                        'padding': '16px',
+                        'shape': 'roundrectangle',
+                        'background-color': 'data(bgColor)',
+                        'border-width': 2,
+                        'border-color': 'data(borderColor)',
+                        'color': 'data(textColor)',
+                        'font-family': "'Inter', sans-serif",
+                        'font-size': 13,
+                        'font-weight': 500,
+                        'text-valign': 'center',
+                        'text-halign': 'center',
+                        'text-wrap': 'none',
+                        'transition-property': 'border-width, border-color, background-color',
+                        'transition-duration': '0.15s',
+                        'shadow-blur': 20,
+                        'shadow-color': 'data(glowColor)',
+                        'shadow-opacity': 0.6,
+                        'shadow-offset-x': 0,
+                        'shadow-offset-y': 4,
+                    },
+                },
+                {
+                    selector: 'node:active, node:selected',
+                    style: {
+                        'border-width': 3,
+                        'border-color': '#6366f1',
+                        'shadow-color': 'rgba(99, 102, 241, 0.6)',
+                        'shadow-blur': 30,
+                        'overlay-opacity': 0,
+                    },
+                },
+                {
+                    selector: 'node.hover',
+                    style: {
+                        'border-width': 3,
+                    },
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'width': 2,
+                        'line-color': 'rgba(99, 102, 241, 0.35)',
+                        'target-arrow-color': 'rgba(99, 102, 241, 0.55)',
+                        'target-arrow-shape': 'triangle',
+                        'arrow-scale': 1.1,
+                        'curve-style': 'bezier',
+                        'transition-property': 'line-color, target-arrow-color, width',
+                        'transition-duration': '0.15s',
+                    },
+                },
+                {
+                    selector: 'edge:selected',
+                    style: {
+                        'width': 3,
+                        'line-color': 'rgba(99, 102, 241, 0.7)',
+                        'target-arrow-color': 'rgba(99, 102, 241, 0.9)',
+                    },
+                },
+                {
+                    selector: 'node.dimmed',
+                    style: {
+                        'opacity': 0.25,
+                    },
+                },
+                {
+                    selector: 'edge.dimmed',
+                    style: {
+                        'opacity': 0.12,
+                    },
+                },
+                {
+                    selector: 'node.highlighted',
+                    style: {
+                        'opacity': 1,
+                    },
+                },
+                {
+                    selector: 'edge.highlighted',
+                    style: {
+                        'opacity': 1,
+                        'width': 3,
+                        'line-color': 'rgba(99, 102, 241, 0.7)',
+                        'target-arrow-color': 'rgba(99, 102, 241, 0.9)',
+                    },
+                },
+            ],
+            minZoom: 0.2,
+            maxZoom: 3,
+            wheelSensitivity: 0.3,
+        });
+
+        // ─── Click on node → select & show detail ───
+        cy.on('tap', 'node', function(evt) {
+            const node = evt.target;
+            showDetail(node.data());
+            highlightNeighborhood(node);
+        });
+
+        // ─── Click on background → deselect ───
+        cy.on('tap', function(evt) {
+            if (evt.target === cy) {
+                clearDetail();
+                clearHighlight();
+            }
+        });
+
+        // ─── Hover tooltip ───
+        const tooltip = document.getElementById('tooltip');
+        cy.on('mouseover', 'node', function(evt) {
+            const node = evt.target;
+            node.addClass('hover');
+            const pos = node.renderedPosition();
+            const container = document.getElementById('cy').getBoundingClientRect();
+            tooltip.textContent = `${node.data('label')} — ${STATE_LABELS[node.data('state')]}`;
+            tooltip.style.left = (pos.x) + 'px';
+            tooltip.style.top = (pos.y) + 'px';
+            tooltip.classList.add('visible');
+        });
+
+        cy.on('mouseout', 'node', function(evt) {
+            evt.target.removeClass('hover');
+            tooltip.classList.remove('visible');
+        });
+
+        // ─── Controls ───
+        document.getElementById('btn-fit').addEventListener('click', () => {
+            cy.fit(undefined, 50);
+        });
+        document.getElementById('btn-zoom-in').addEventListener('click', () => {
+            cy.zoom({ level: cy.zoom() * 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 }});
+        });
+        document.getElementById('btn-zoom-out').addEventListener('click', () => {
+            cy.zoom({ level: cy.zoom() / 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 }});
+        });
+
+        return cy;
+    }
+
+    // ─── Highlight neighborhood ───
+    function highlightNeighborhood(node) {
+        cy.elements().addClass('dimmed');
+        const neighborhood = node.neighborhood().add(node);
+        neighborhood.removeClass('dimmed').addClass('highlighted');
+    }
+
+    function clearHighlight() {
+        cy.elements().removeClass('dimmed highlighted');
+    }
+
+    // ─── Sidebar detail ───
+    function showDetail(data) {
+        document.getElementById('sidebar-empty').style.display = 'none';
+        const detail = document.getElementById('sidebar-detail');
+        detail.style.display = 'block';
+
+        document.getElementById('detail-name').textContent = data.id;
+
+        const badge = document.getElementById('detail-badge');
+        badge.textContent = STATE_LABELS[data.state];
+        badge.className = 'state-badge ' + data.state;
+
+        document.getElementById('detail-cmd').textContent = data.cmd || '(no command)';
+
+        const sections = document.getElementById('detail-sections');
+        sections.innerHTML = '';
+
+        const addSection = (title, items, cls = '') => {
+            if (!items || items.length === 0) return;
+            const sec = document.createElement('div');
+            sec.className = 'sidebar-section';
+            sec.innerHTML = `<div class="section-title">${title}</div>`;
+            const ul = document.createElement('ul');
+            ul.className = 'file-list';
+            for (const item of items) {
+                const li = document.createElement('li');
+                li.className = 'file-item' + (cls ? ' ' + cls : '');
+                li.textContent = item;
+                ul.appendChild(li);
+            }
+            sec.appendChild(ul);
+            sections.appendChild(sec);
+        };
+
+        addSection('Dependencies', data.deps);
+        addSection('Outputs', data.outs);
+        addSection('Parameters', data.params, 'param');
+        addSection('Metrics', data.metrics, 'metric');
+        addSection('Plots', data.plots, 'plot');
+    }
+
+    function clearDetail() {
+        document.getElementById('sidebar-empty').style.display = 'flex';
+        document.getElementById('sidebar-detail').style.display = 'none';
+    }
+
+    // ─── Stats bar ───
+    function updateStats(data) {
+        const counts = { valid: 0, needs_rerun: 0, never_run: 0 };
+        for (const n of data.nodes) counts[n.state]++;
+
+        const bar = document.getElementById('stats-bar');
+        bar.innerHTML = `
+            <div class="stat-chip"><span class="count">${data.nodes.length}</span> stages</div>
+            <div class="stat-chip"><span class="count">${data.edges.length}</span> edges</div>
+            <div class="stat-chip"><span class="count" style="color: var(--state-valid)">${counts.valid}</span> valid</div>
+            <div class="stat-chip"><span class="count" style="color: var(--state-rerun)">${counts.needs_rerun}</span> needs rerun</div>
+            <div class="stat-chip"><span class="count" style="color: var(--state-never)">${counts.never_run}</span> never run</div>
+        `;
+    }
+
+    // ─── Boot ───
+    async function boot() {
+        const loading = document.getElementById('loading');
+        try {
+            const data = await fetchPipeline();
+            if (data.error) throw new Error(data.error);
+
+            const elements = buildElements(data);
+            initGraph(elements);
+            updateStats(data);
+
+            setTimeout(() => loading.classList.add('hidden'), 400);
+        } catch (err) {
+            loading.innerHTML = `
+                <div class="error-container">
+                    <div class="error-icon">💥</div>
+                    <div class="error-title">Failed to load pipeline</div>
+                    <div class="error-message">${err.message}</div>
+                </div>
+            `;
+        }
+    }
+
+    boot();
+})();
+</script>
+</body>
+</html>
