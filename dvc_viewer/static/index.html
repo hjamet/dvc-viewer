@@ -315,6 +315,8 @@
             transition: all 0.15s ease;
             display: flex;
             align-items: center;
+            word-break: break-all;
+            overflow-wrap: break-word;
         }
 
         .file-item:hover {
@@ -1206,6 +1208,7 @@
                     <span class="run-spinner"></span>
                     Run Stage
                 </button>
+                <div id="sidebar-logs-container"></div>
             </div>
         </aside>
     </main>
@@ -1475,11 +1478,28 @@
                 return cy;
             }
 
-            // ─── Highlight neighborhood ───
+            // ─── Highlight execution chain (all upstream ancestors + the node) ───
             function highlightNeighborhood(node) {
                 cy.elements().addClass('dimmed');
-                const neighborhood = node.neighborhood().add(node);
-                neighborhood.removeClass('dimmed').addClass('highlighted');
+                // BFS upstream: find all predecessors (stages that would run before this one)
+                const chain = cy.collection().merge(node);
+                const queue = [node];
+                const visited = new Set([node.id()]);
+                while (queue.length > 0) {
+                    const current = queue.shift();
+                    const preds = current.predecessors('node');
+                    preds.forEach(pred => {
+                        if (!visited.has(pred.id())) {
+                            visited.add(pred.id());
+                            chain.merge(pred);
+                            queue.push(pred);
+                        }
+                    });
+                }
+                // Also include edges between chain nodes
+                const chainEdges = chain.edgesWith(chain);
+                chain.merge(chainEdges);
+                chain.removeClass('dimmed').addClass('highlighted');
             }
 
             function clearHighlight() {
@@ -1588,7 +1608,10 @@
                         <div class="sidebar-logs-empty">No execution logs yet</div>
                     `;
                 }
-                sections.appendChild(logsDiv);
+                // Append logs below the Run Stage button
+                const logsContainer = document.getElementById('sidebar-logs-container');
+                logsContainer.innerHTML = '';
+                logsContainer.appendChild(logsDiv);
             }
 
             function clearDetail() {
