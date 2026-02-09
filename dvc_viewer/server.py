@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .parser import build_pipeline, pipeline_to_dict
@@ -226,6 +226,127 @@ async def run_pipeline(request: Request):
             "failed_stage": stage,
             "stage": stage,
         }, status_code=500)
+
+
+@app.get("/api/run-stream")
+async def run_pipeline_stream(
+    stage: str = Query(None, description="Stage to run (null = all)"),
+    force: bool = Query(False, description="Force rerun"),
+):
+    """Stream pipeline execution via Server-Sent Events.
+
+    Events:
+      stage_start  {"stage": "..."}                 — a stage begins executing
+      stage_skip   {"stage": "..."}                 — stage skipped (unchanged)
+      log          {"stage": "...", "line": "..."}  — output line
+      stage_done   {"stage": "...", "success": bool} — stage finished
+      done         {"success": bool, "failed_stage": ...} — pipeline complete
+    """
+    import select
+    import threading
+
+    cmd = [_dvc_bin or "dvc", "repro"]
+    if stage:
+        cmd.append(stage)
+    if force:
+        cmd.append("--force")
+
+    def sse_event(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    def generate():
+        current_stage = None
+        success = True
+        failed_stage = None
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(_project_dir),
+                bufsize=1,  # line-buffered
+            )
+        except FileNotFoundError:
+            yield sse_event("done", {
+                "success": False,
+                "failed_stage": None,
+                "error": "DVC is not installed or not found in PATH.",
+            })
+            return
+
+        re_running = re.compile(r"Running stage '([\w-]+)'")
+        re_skipped = re.compile(r"Stage '([\w-]+)' didn't change")
+        re_failed  = re.compile(r"failed to reproduce '([\w-]+)'")
+        re_failed2 = re.compile(r"ERROR:.*stage '([\w-]+)'")
+
+        for raw_line in proc.stdout:
+            line = raw_line.rstrip("\n")
+
+            # Detect stage transitions
+            m_run = re_running.search(line)
+            m_skip = re_skipped.search(line)
+
+            if m_run:
+                new_stage = m_run.group(1)
+                # Previous stage finished successfully
+                if current_stage and current_stage != new_stage:
+                    yield sse_event("stage_done", {
+                        "stage": current_stage, "success": True,
+                    })
+                current_stage = new_stage
+                yield sse_event("stage_start", {"stage": new_stage})
+
+            elif m_skip:
+                skipped = m_skip.group(1)
+                # Close previous stage if needed
+                if current_stage and current_stage != skipped:
+                    yield sse_event("stage_done", {
+                        "stage": current_stage, "success": True,
+                    })
+                current_stage = None
+                yield sse_event("stage_skip", {"stage": skipped})
+
+            # Check for failures
+            m_fail = re_failed.search(line) or re_failed2.search(line)
+            if m_fail:
+                failed_stage = m_fail.group(1)
+                success = False
+
+            # Send log line
+            yield sse_event("log", {
+                "stage": current_stage,
+                "line": line,
+            })
+
+        proc.wait()
+
+        # Close final stage
+        if current_stage:
+            stage_ok = proc.returncode == 0 and (failed_stage != current_stage)
+            yield sse_event("stage_done", {
+                "stage": current_stage,
+                "success": stage_ok,
+            })
+
+        if proc.returncode != 0:
+            success = False
+
+        yield sse_event("done", {
+            "success": success,
+            "failed_stage": failed_stage,
+        })
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/file/history")
