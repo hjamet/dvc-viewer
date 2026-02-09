@@ -1630,9 +1630,6 @@
                 const sections = document.getElementById('detail-sections');
                 sections.innerHTML = '';
 
-                const INSPECTABLE_EXTS = ['.csv', '.tsv', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.pdf', '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.jsonl'];
-                const isInspectable = (path) => INSPECTABLE_EXTS.some(ext => path.toLowerCase().endsWith(ext));
-
                 // File items are now objects: {path, exists, status}
                 const addFileSection = (title, items, cls = '', clickable = false) => {
                     if (!items || items.length === 0) return;
@@ -2123,6 +2120,9 @@
             let _toastInterval = null;  // interval for live elapsed time in toast
             let _nodeBadgeEls = {};  // {stageId: DOM element} for node overlay badges
 
+            const INSPECTABLE_EXTS = ['.csv', '.tsv', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.pdf', '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.jsonl'];
+            const isInspectable = (path) => INSPECTABLE_EXTS.some(ext => path.toLowerCase().endsWith(ext));
+
             // Toast helpers
             function showToast(text, type = 'running') {
                 const toast = document.getElementById('exec-toast');
@@ -2404,16 +2404,22 @@
                                         const outs = n.data('outs') || [];
                                         const metrics = n.data('metrics') || [];
                                         const plots = n.data('plots') || [];
-                                        [...outs, ...metrics, ...plots].forEach(o => {
+                                        const allFiles = [...outs, ...metrics, ...plots];
+                                        allFiles.forEach(o => {
                                             const p = typeof o === 'string' ? o : o.path;
                                             if (p) _updatedOutputs.add(p);
                                         });
+
+                                        // Only add badge if there are inspectable files
+                                        const hasInspectable = allFiles.some(o => {
+                                            const p = typeof o === 'string' ? o : o.path;
+                                            return p && isInspectable(p);
+                                        });
+                                        if (hasInspectable) addNodeBadge(data.stage);
                                     }
                                 }
                                 // Refresh sidebar to show updated file statuses
                                 refreshPipeline();
-                                // Add badge on node
-                                if (data.success) addNodeBadge(data.stage);
                                 break;
 
                             case 'done':
@@ -2463,8 +2469,8 @@
                     for (const node of data.nodes) {
                         const cyNode = cy.getElementById(node.id);
                         if (cyNode.length) {
-                            // Skip color reset for error stages — keep them red
-                            if (_errorStages.has(node.id)) {
+                            // Skip color reset for error stages OR currently animating stages
+                            if (_errorStages.has(node.id) || cyNode.scratch('_animating')) {
                                 cyNode.data({
                                     state: node.state,
                                     deps: node.deps,
