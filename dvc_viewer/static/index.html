@@ -557,21 +557,54 @@
         .file-item.inspectable {
             cursor: pointer;
             position: relative;
+            padding-right: 32px;
         }
 
         .file-item.inspectable::after {
-            content: '👁';
+            content: '🔍';
             position: absolute;
             right: 8px;
             top: 50%;
             transform: translateY(-50%);
             font-size: 11px;
-            opacity: 0;
-            transition: opacity 0.15s ease;
+            opacity: 0.4;
+            transition: all 0.15s ease;
+        }
+
+        .file-item.inspectable:hover {
+            background: var(--accent-glow);
+            border-color: var(--accent);
         }
 
         .file-item.inspectable:hover::after {
             opacity: 1;
+        }
+
+        .new-result-badge {
+            display: inline-block;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            padding: 1px 6px;
+            border-radius: 100px;
+            background: var(--accent);
+            color: #fff;
+            margin-left: 6px;
+            animation: badge-pulse 2s ease-in-out infinite;
+            vertical-align: middle;
+            line-height: 1.4;
+        }
+
+        @keyframes badge-pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
         }
 
         /* ─── Inspector Modal ─── */
@@ -1011,6 +1044,14 @@
             text-transform: uppercase;
             letter-spacing: 0.08em;
             color: var(--text-muted);
+        }
+
+        .sidebar-logs-duration {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--accent);
+            margin-left: 8px;
+            font-weight: 500;
         }
 
         .sidebar-logs-copy {
@@ -1559,16 +1600,27 @@
                         const path = typeof item === 'string' ? item : item.path;
                         const status = typeof item === 'string' ? 'unknown' : (item.status || 'unknown');
                         const canInspect = clickable && isInspectable(path);
+                        const isNew = _updatedOutputs.has(path);
                         const li = document.createElement('li');
                         li.className = 'file-item' + (cls ? ' ' + cls : '') + ` status-${status}` + (canInspect ? ' inspectable' : '');
                         const dot = document.createElement('span');
                         dot.className = `status-dot ${status}`;
                         li.appendChild(dot);
                         li.appendChild(document.createTextNode(path));
+                        if (isNew) {
+                            const badge = document.createElement('span');
+                            badge.className = 'new-result-badge';
+                            badge.textContent = 'NEW';
+                            li.appendChild(badge);
+                        }
                         if (canInspect) {
                             li.addEventListener('click', (e) => {
                                 e.stopPropagation();
+                                _updatedOutputs.delete(path);
                                 openFileInspector(path);
+                                // Remove badge after opening
+                                const b = li.querySelector('.new-result-badge');
+                                if (b) b.remove();
                             });
                         }
                         ul.appendChild(li);
@@ -1604,12 +1656,14 @@
                 // ─── Execution Logs section ───
                 const stageId = data.id;
                 const logs = stageLogs[stageId];
+                const timer = _stageTimers[stageId];
+                const durationStr = timer && timer.duration ? ` · ${formatElapsed(timer.duration)}` : '';
                 const logsDiv = document.createElement('div');
                 logsDiv.className = 'sidebar-logs';
                 if (logs && logs.trim()) {
                     logsDiv.innerHTML = `
                         <div class="sidebar-logs-header">
-                            <span class="sidebar-logs-title">Execution Logs</span>
+                            <span class="sidebar-logs-title">Execution Logs<span class="sidebar-logs-duration">${durationStr}</span></span>
                             <button class="sidebar-logs-copy" data-stage="${stageId}">📋 Copy</button>
                         </div>
                         <pre class="sidebar-logs-content">${escapeHtml(logs)}</pre>
@@ -2019,6 +2073,9 @@
             let isRunning = false;
             let stageLogs = {};  // {stageId: 'log lines...'}
             let _errorStages = new Set();  // stages that failed — keep red until next run
+            let _updatedOutputs = new Set();  // output files produced in last run
+            let _stageTimers = {};  // {stageId: {start: Date.now(), duration: ms}}
+            let _toastInterval = null;  // interval for live elapsed time in toast
 
             // Toast helpers
             function showToast(text, type = 'running') {
@@ -2034,6 +2091,18 @@
 
             function hideToast() {
                 document.getElementById('exec-toast').classList.remove('active');
+                if (_toastInterval) { clearInterval(_toastInterval); _toastInterval = null; }
+            }
+
+            function formatElapsed(ms) {
+                const s = Math.floor(ms / 1000);
+                if (s < 60) return `${s}s`;
+                const m = Math.floor(s / 60);
+                const rs = s % 60;
+                if (m < 60) return `${m}m ${rs.toString().padStart(2, '0')}s`;
+                const h = Math.floor(m / 60);
+                const rm = m % 60;
+                return `${h}h ${rm.toString().padStart(2, '0')}m`;
             }
 
             // Per-node animation
@@ -2133,8 +2202,10 @@
                 stageBtn.classList.add('running');
                 stageBtn.disabled = true;
 
-                // Clear previous logs and error states
+                // Clear previous logs, error states, and updated outputs
                 _errorStages.clear();
+                _updatedOutputs.clear();
+                _stageTimers = {};
                 if (!stage) {
                     stageLogs = {};  // Clear all when running full pipeline
                 } else {
@@ -2185,7 +2256,17 @@
                             case 'stage_start':
                                 currentStage = data.stage;
                                 if (!stageLogs[data.stage]) stageLogs[data.stage] = '';
+                                _stageTimers[data.stage] = { start: Date.now(), duration: null };
                                 showToast(`Running: ${data.stage}`, 'running');
+                                // Live elapsed timer in toast
+                                if (_toastInterval) clearInterval(_toastInterval);
+                                _toastInterval = setInterval(() => {
+                                    const t = _stageTimers[data.stage];
+                                    if (t && !t.duration) {
+                                        const elapsed = formatElapsed(Date.now() - t.start);
+                                        document.getElementById('toast-text').textContent = `Running: ${data.stage} (${elapsed}…)`;
+                                    }
+                                }, 1000);
                                 try { startSingleNodeAnimation(data.stage); } catch (e) { }
                                 break;
 
@@ -2210,6 +2291,11 @@
                                 break;
 
                             case 'stage_done':
+                                // Record duration
+                                if (_stageTimers[data.stage]) {
+                                    _stageTimers[data.stage].duration = Date.now() - _stageTimers[data.stage].start;
+                                }
+                                if (_toastInterval) { clearInterval(_toastInterval); _toastInterval = null; }
                                 try {
                                     stopSingleNodeAnimation(data.stage, data.success);
                                 } catch (e) { }
@@ -2218,6 +2304,21 @@
                                     failedStage = data.stage;
                                     _errorStages.add(data.stage);
                                 }
+                                // Mark outputs of this stage as updated
+                                if (data.success && cy) {
+                                    const n = cy.getElementById(data.stage);
+                                    if (n.length) {
+                                        const outs = n.data('outs') || [];
+                                        const metrics = n.data('metrics') || [];
+                                        const plots = n.data('plots') || [];
+                                        [...outs, ...metrics, ...plots].forEach(o => {
+                                            const p = typeof o === 'string' ? o : o.path;
+                                            if (p) _updatedOutputs.add(p);
+                                        });
+                                    }
+                                }
+                                // Refresh sidebar to show updated file statuses
+                                refreshPipeline();
                                 break;
 
                             case 'done':
