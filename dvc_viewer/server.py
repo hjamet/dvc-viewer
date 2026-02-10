@@ -37,6 +37,9 @@ _dvc_bin = resolve_dvc_bin(_project_dir)
 _last_dvc_yaml_time = 0
 _last_dvc_lock_time = 0
 
+# Track the running dvc repro process so we can stop it
+_running_proc: subprocess.Popen | None = None
+
 # Serve static files
 _static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
@@ -543,6 +546,7 @@ async def run_pipeline_stream(
         success = True
         failed_stage = None
 
+        global _running_proc
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -551,7 +555,9 @@ async def run_pipeline_stream(
                 text=True,
                 cwd=str(_project_dir),
                 bufsize=1,  # line-buffered
+                start_new_session=True,  # own process group for killpg
             )
+            _running_proc = proc
         except FileNotFoundError:
             yield sse_event("done", {
                 "success": False,
@@ -605,6 +611,7 @@ async def run_pipeline_stream(
             })
 
         proc.wait()
+        _running_proc = None
 
         # Close final stage
         if current_stage:
@@ -614,12 +621,14 @@ async def run_pipeline_stream(
                 "success": stage_ok,
             })
 
+        cancelled = proc.returncode in (-15, -9, 137)  # SIGTERM / SIGKILL
         if proc.returncode != 0:
             success = False
 
         yield sse_event("done", {
             "success": success,
             "failed_stage": failed_stage,
+            "cancelled": cancelled,
         })
 
     return StreamingResponse(
@@ -631,6 +640,28 @@ async def run_pipeline_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/stop")
+async def stop_pipeline():
+    """Stop the running dvc repro process."""
+    global _running_proc
+    import signal
+
+    proc = _running_proc
+    if proc is None or proc.poll() is not None:
+        return {"stopped": False, "reason": "No pipeline running"}
+
+    try:
+        # Send SIGTERM to the process group so child processes also get killed
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        try:
+            proc.terminate()
+        except (ProcessLookupError, OSError):
+            pass
+
+    return {"stopped": True}
 
 
 @app.get("/api/watch")

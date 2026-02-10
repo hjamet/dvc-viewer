@@ -978,6 +978,32 @@
             }
         }
 
+        .stop-btn {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border: 1px solid var(--state-failed);
+            border-radius: 8px;
+            background: var(--state-failed-bg);
+            color: var(--state-failed);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .stop-btn:hover {
+            background: rgba(244, 63, 94, 0.25);
+            box-shadow: 0 0 12px var(--state-failed-glow);
+            transform: translateY(-1px);
+        }
+
+        .stop-btn.visible {
+            display: inline-flex;
+        }
+
         .run-btn-sidebar {
             width: 100%;
             justify-content: center;
@@ -1541,6 +1567,7 @@
             <span class="run-spinner"></span>
             Run All
         </button>
+        <button class="stop-btn" id="btn-stop" title="Stop running pipeline">■ Stop</button>
         </div>
     </header>
 
@@ -2293,6 +2320,8 @@
             }
 
             // ─── Watch for file changes (Auto-Refresh) ───
+            let _statusPollTimer = null;
+
             function initWatcher() {
                 const source = new EventSource('/api/watch');
                 source.addEventListener('reload', async () => {
@@ -2319,7 +2348,20 @@
                     source.close();
                     setTimeout(initWatcher, 5000); // Retry after 5s
                 };
+
+                // Periodic dvc status polling (catches dep/param/data changes)
+                startStatusPoll();
             }
+
+            function startStatusPoll() {
+                if (_statusPollTimer) return;
+                _statusPollTimer = setInterval(async () => {
+                    if (!isRunning) {
+                        await refreshPipeline(0); // No retries for background poll
+                    }
+                }, 1_000);
+            }
+
 
             // ─── Boot ───
             async function boot() {
@@ -2852,10 +2894,12 @@
 
                 const allBtn = document.getElementById('btn-run-all');
                 const stageBtn = document.getElementById('btn-run-stage');
+                const stopBtn = document.getElementById('btn-stop');
                 allBtn.classList.add('running');
                 allBtn.disabled = true;
                 stageBtn.classList.add('running');
                 stageBtn.disabled = true;
+                stopBtn.classList.add('visible');
 
                 // Clear previous logs, error states, and updated outputs
                 _errorStages.clear();
@@ -2883,6 +2927,7 @@
                     let buffer = '';
                     let currentStage = null;
                     let pipelineSuccess = true;
+                    let pipelineCancelled = false;
                     let failedStage = null;
 
                     while (true) {
@@ -2961,6 +3006,33 @@
                                     _errorStages.add(data.stage);
                                 }
 
+                                // Optimistically update completed stage data
+                                if (data.success && cy) {
+                                    const n = cy.getElementById(data.stage);
+                                    if (n.length) {
+                                        // Mark stage as valid
+                                        n.data('state', 'valid');
+                                        // Update deps/outs/metrics status to 'current'
+                                        const updateFileStatus = (files) => {
+                                            if (!files) return files;
+                                            return files.map(f => {
+                                                if (typeof f === 'object' && f.path) {
+                                                    return { ...f, exists: true, status: 'current' };
+                                                }
+                                                return f;
+                                            });
+                                        };
+                                        n.data('deps', updateFileStatus(n.data('deps')));
+                                        n.data('outs', updateFileStatus(n.data('outs')));
+                                        n.data('metrics', updateFileStatus(n.data('metrics')));
+                                        n.data('plots', updateFileStatus(n.data('plots')));
+                                        // Refresh sidebar if this stage is selected
+                                        if (selectedStage === data.stage) {
+                                            showDetail(n.data());
+                                        }
+                                    }
+                                }
+
                                 // Mark outputs of this stage as updated
                                 if (data.success && cy) {
                                     const n = cy.getElementById(data.stage);
@@ -2991,6 +3063,7 @@
 
                             case 'done':
                                 pipelineSuccess = data.success;
+                                pipelineCancelled = data.cancelled || false;
                                 if (data.failed_stage) failedStage = data.failed_stage;
                                 break;
                         }
@@ -2999,12 +3072,15 @@
                     // Final UI update
                     if (pipelineSuccess) {
                         showToast('Pipeline completed ✓', 'success');
+                    } else if (pipelineCancelled) {
+                        showToast('Pipeline cancelled ✗', 'error');
                     } else {
                         showToast(`Failed: ${failedStage || 'unknown stage'}`, 'error');
                     }
                     setTimeout(hideToast, 4000);
 
-                    // Refresh pipeline data
+                    // Refresh pipeline data (with delay to let DVC release its lock)
+                    await new Promise(r => setTimeout(r, 1500));
                     await refreshPipeline();
 
                 } catch (err) {
@@ -3016,6 +3092,7 @@
                     allBtn.disabled = false;
                     stageBtn.classList.remove('running');
                     stageBtn.disabled = false;
+                    stopBtn.classList.remove('visible');
                     // Stop any remaining animations
                     if (cy) cy.nodes().forEach(n => {
                         if (n.scratch('_animating')) {
@@ -3026,11 +3103,26 @@
                 }
             }
 
-            async function refreshPipeline() {
+            async function refreshPipeline(retries = 2) {
                 try {
                     const res = await fetch('/api/pipeline');
                     const data = await res.json();
-                    if (data.error) return;
+                    if (data.error) {
+                        // If DVC status failed (lock held), retry after a delay
+                        if (retries > 0) {
+                            await new Promise(r => setTimeout(r, 2000));
+                            return refreshPipeline(retries - 1);
+                        }
+                        return;
+                    }
+
+                    // Check if data looks stale (all locked stages showing needs_rerun)
+                    const allNeedsRerun = data.nodes.every(n => n.state !== 'valid');
+                    if (allNeedsRerun && retries > 0) {
+                        // Likely stale due to lock race — retry
+                        await new Promise(r => setTimeout(r, 2000));
+                        return refreshPipeline(retries - 1);
+                    }
 
                     // Update node data (colors driven by data mappers in stylesheet)
                     for (const node of data.nodes) {
@@ -3082,6 +3174,15 @@
             // Run Stage button
             document.getElementById('btn-run-stage').addEventListener('click', () => {
                 if (selectedStage) runPipeline(selectedStage);
+            });
+
+            // Stop button
+            document.getElementById('btn-stop').addEventListener('click', async () => {
+                try {
+                    await fetch('/api/stop', { method: 'POST' });
+                } catch (e) {
+                    console.error('Failed to stop pipeline:', e);
+                }
             });
 
             boot();
