@@ -1203,6 +1203,173 @@
             color: #818cf8;
             letter-spacing: 0.05em;
         }
+
+        /* ─── Hydra Config Accordion ─── */
+        .accordion {
+            border-bottom: 1px solid var(--border);
+        }
+
+        .accordion-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s ease;
+        }
+
+        .accordion-header:hover {
+            background: var(--bg-glass);
+        }
+
+        .accordion-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .accordion-header .section-title {
+            margin-bottom: 0;
+        }
+
+        .accordion-chevron {
+            font-size: 12px;
+            color: var(--text-muted);
+            transition: transform 0.25s ease;
+        }
+
+        .accordion.open .accordion-chevron {
+            transform: rotate(90deg);
+        }
+
+        .accordion-body {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .accordion.open .accordion-body {
+            max-height: 800px;
+        }
+
+        .accordion-content {
+            padding: 0 20px 16px;
+        }
+
+        .hydra-config-path {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .hydra-config-path .path-text {
+            opacity: 0.7;
+        }
+
+        .hydra-textarea {
+            width: 100%;
+            min-height: 180px;
+            max-height: 400px;
+            resize: vertical;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            outline: none;
+            tab-size: 2;
+            transition: border-color 0.2s ease;
+        }
+
+        .hydra-textarea:focus {
+            border-color: var(--border-glow);
+            color: var(--text-primary);
+        }
+
+        .hydra-textarea.error {
+            border-color: rgba(239, 68, 68, 0.6);
+        }
+
+        .hydra-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 10px;
+            gap: 10px;
+        }
+
+        .hydra-save-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border: 1px solid var(--border-glow);
+            border-radius: 6px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(139, 92, 246, 0.12));
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .hydra-save-btn:hover {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(139, 92, 246, 0.25));
+            border-color: #818cf8;
+        }
+
+        .hydra-save-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .hydra-save-btn.saved {
+            border-color: rgba(34, 197, 94, 0.5);
+            background: rgba(34, 197, 94, 0.12);
+            color: var(--state-valid);
+        }
+
+        .hydra-status {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'Inter', sans-serif;
+        }
+
+        .hydra-status.unsaved {
+            color: var(--state-rerun);
+        }
+
+        .hydra-status.error {
+            color: #ef4444;
+        }
+
+        .hydra-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            color: var(--text-muted);
+            font-size: 12px;
+            gap: 8px;
+        }
+
+        .hydra-loading .mini-spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
     </style>
 </head>
 
@@ -1377,6 +1544,8 @@
                             params: node.params || [],
                             metrics: node.metrics || [],
                             plots: node.plots || [],
+                            hydra_config: node.hydra_config || null,
+                            hydra_config_exists: node.hydra_config_exists || false,
                             bgColor: sc.bg,
                             borderColor: sc.border,
                             textColor: sc.text,
@@ -1668,6 +1837,157 @@
                 addSection('Parameters', data.params, 'param');
                 addFileSection('Metrics', data.metrics, 'metric', true);
                 addFileSection('Plots', data.plots, 'plot', true);
+
+                // ─── Hydra Config Accordion ───
+                if (data.hydra_config) {
+                    const acc = document.createElement('div');
+                    acc.className = 'accordion sidebar-section';
+                    acc.style.padding = '0';
+                    acc.style.borderBottom = '1px solid var(--border)';
+
+                    const header = document.createElement('div');
+                    header.className = 'accordion-header';
+                    header.innerHTML = `
+                        <div class="accordion-header-left">
+                            <span class="section-title">⚙️ Hydra Config</span>
+                        </div>
+                        <span class="accordion-chevron">▶</span>
+                    `;
+
+                    const body = document.createElement('div');
+                    body.className = 'accordion-body';
+
+                    const content = document.createElement('div');
+                    content.className = 'accordion-content';
+                    content.innerHTML = `<div class="hydra-loading"><div class="mini-spinner"></div>Loading config…</div>`;
+                    body.appendChild(content);
+
+                    let loaded = false;
+                    let originalContent = '';
+
+                    header.addEventListener('click', () => {
+                        acc.classList.toggle('open');
+                        if (!loaded && acc.classList.contains('open')) {
+                            loaded = true;
+                            loadHydraConfig(data.hydra_config, content);
+                        }
+                    });
+
+                    async function loadHydraConfig(configPath, container) {
+                        try {
+                            const res = await fetch(`/api/hydra-config?path=${encodeURIComponent(configPath)}`);
+                            const result = await res.json();
+                            if (result.error) {
+                                container.innerHTML = `<div class="hydra-loading" style="color:#ef4444;">❌ ${escapeHtml(result.error)}</div>`;
+                                return;
+                            }
+                            originalContent = result.content;
+                            container.innerHTML = '';
+
+                            const pathDiv = document.createElement('div');
+                            pathDiv.className = 'hydra-config-path';
+                            pathDiv.innerHTML = `📁 <span class="path-text">${escapeHtml(configPath)}</span>`;
+                            container.appendChild(pathDiv);
+
+                            const textarea = document.createElement('textarea');
+                            textarea.className = 'hydra-textarea';
+                            textarea.value = result.content;
+                            textarea.spellcheck = false;
+                            container.appendChild(textarea);
+
+                            const actions = document.createElement('div');
+                            actions.className = 'hydra-actions';
+
+                            const status = document.createElement('span');
+                            status.className = 'hydra-status';
+                            status.textContent = '';
+
+                            const saveBtn = document.createElement('button');
+                            saveBtn.className = 'hydra-save-btn';
+                            saveBtn.innerHTML = '💾 Save';
+                            saveBtn.disabled = true;
+
+                            actions.appendChild(status);
+                            actions.appendChild(saveBtn);
+                            container.appendChild(actions);
+
+                            // Track changes
+                            textarea.addEventListener('input', () => {
+                                const changed = textarea.value !== originalContent;
+                                saveBtn.disabled = !changed;
+                                textarea.classList.remove('error');
+                                if (changed) {
+                                    status.className = 'hydra-status unsaved';
+                                    status.textContent = '● Unsaved changes';
+                                } else {
+                                    status.className = 'hydra-status';
+                                    status.textContent = '';
+                                }
+                            });
+
+                            // Tab support in textarea
+                            textarea.addEventListener('keydown', (e) => {
+                                if (e.key === 'Tab') {
+                                    e.preventDefault();
+                                    const start = textarea.selectionStart;
+                                    const end = textarea.selectionEnd;
+                                    textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
+                                    textarea.selectionStart = textarea.selectionEnd = start + 2;
+                                    textarea.dispatchEvent(new Event('input'));
+                                }
+                            });
+
+                            // Save handler
+                            saveBtn.addEventListener('click', async () => {
+                                saveBtn.disabled = true;
+                                saveBtn.innerHTML = '⏳ Saving…';
+                                status.className = 'hydra-status';
+                                status.textContent = '';
+
+                                try {
+                                    const putRes = await fetch('/api/hydra-config', {
+                                        method: 'PUT',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ path: configPath, content: textarea.value }),
+                                    });
+                                    const putData = await putRes.json();
+
+                                    if (putData.success) {
+                                        originalContent = textarea.value;
+                                        saveBtn.innerHTML = '✅ Saved!';
+                                        saveBtn.classList.add('saved');
+                                        status.className = 'hydra-status';
+                                        status.textContent = '';
+                                        textarea.classList.remove('error');
+                                        setTimeout(() => {
+                                            saveBtn.innerHTML = '💾 Save';
+                                            saveBtn.classList.remove('saved');
+                                            saveBtn.disabled = true;
+                                        }, 2000);
+                                    } else {
+                                        saveBtn.innerHTML = '💾 Save';
+                                        saveBtn.disabled = false;
+                                        textarea.classList.add('error');
+                                        status.className = 'hydra-status error';
+                                        status.textContent = putData.error || 'Save failed';
+                                    }
+                                } catch (err) {
+                                    saveBtn.innerHTML = '💾 Save';
+                                    saveBtn.disabled = false;
+                                    status.className = 'hydra-status error';
+                                    status.textContent = 'Network error';
+                                }
+                            });
+
+                        } catch (err) {
+                            container.innerHTML = `<div class="hydra-loading" style="color:#ef4444;">❌ Failed to load config</div>`;
+                        }
+                    }
+
+                    acc.appendChild(header);
+                    acc.appendChild(body);
+                    sections.appendChild(acc);
+                }
 
                 // ─── Execution Logs section ───
                 const stageId = data.id;

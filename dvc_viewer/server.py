@@ -21,6 +21,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+import yaml
 
 from .parser import build_pipeline, pipeline_to_dict, resolve_dvc_bin
 
@@ -157,6 +158,45 @@ async def file_raw(path: str = Query(..., description="Relative file path")):
         mime = "application/octet-stream"
 
     return FileResponse(path=str(target), media_type=mime)
+
+
+@app.get("/api/hydra-config")
+async def get_hydra_config(path: str = Query(..., description="Relative path to Hydra config YAML")):
+    """Read a Hydra config YAML file and return its content."""
+    target = _safe_resolve(path)
+    if target is None:
+        return JSONResponse(content={"error": "Config file not found"}, status_code=404)
+    try:
+        content = target.read_text(encoding="utf-8")
+        return JSONResponse(content={"content": content, "path": path})
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.put("/api/hydra-config")
+async def put_hydra_config(request: Request):
+    """Write updated content to a Hydra config YAML file."""
+    body = await request.json()
+    path = body.get("path")
+    content = body.get("content")
+    if not path or content is None:
+        return JSONResponse(content={"error": "Missing 'path' or 'content'"}, status_code=400)
+
+    target = _safe_resolve(path)
+    if target is None:
+        return JSONResponse(content={"error": "Config file not found"}, status_code=404)
+
+    try:
+        # Validate YAML syntax before writing
+        yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        return JSONResponse(content={"error": f"Invalid YAML: {e}"}, status_code=422)
+
+    try:
+        target.write_text(content, encoding="utf-8")
+        return JSONResponse(content={"success": True, "path": path})
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.post("/api/run")

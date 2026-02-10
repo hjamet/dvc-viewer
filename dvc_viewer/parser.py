@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,7 @@ class Stage:
     metrics: list[str] = field(default_factory=list)
     plots: list[str] = field(default_factory=list)
     state: str = "never_run"  # valid | needs_rerun | never_run
+    hydra_config: str | None = None  # resolved relative path to config YAML
 
 
 @dataclass
@@ -86,6 +88,29 @@ def _resolve_params(item: Any) -> list[str]:
     return result
 
 
+# Regex to extract --config-name or -cn value from a command string
+_RE_CONFIG_NAME = re.compile(r"(?:--config-name|--config_name|-cn)\s+(\S+)")
+
+
+def _extract_hydra_config(cmd: str, project_dir: Path) -> str | None:
+    """Extract the Hydra config path from a stage command.
+
+    Detects ``--config-name <name>`` / ``-cn <name>`` and resolves to
+    ``configs/<name>.yaml``.  Returns the relative path if the file
+    exists on disk, otherwise ``None``.
+    """
+    m = _RE_CONFIG_NAME.search(cmd)
+    if not m:
+        return None
+    config_name = m.group(1)
+    # Hydra resolves config names relative to a config dir; the convention
+    # in the consuming project is ``configs/<name>.yaml``.
+    rel_path = f"configs/{config_name}.yaml"
+    if (project_dir / rel_path).exists():
+        return rel_path
+    return None
+
+
 def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     """Parse dvc.yaml to extract all stage definitions."""
     dvc_yaml_path = Path(project_dir) / "dvc.yaml"
@@ -101,14 +126,16 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     for name, definition in stages_data.items():
         if not isinstance(definition, dict):
             continue
+        cmd = definition.get("cmd", "")
         stage = Stage(
             name=name,
-            cmd=definition.get("cmd", ""),
+            cmd=cmd,
             deps=_resolve_dep_or_out(definition.get("deps")),
             outs=_resolve_dep_or_out(definition.get("outs")),
             params=_resolve_params(definition.get("params")),
             metrics=_resolve_dep_or_out(definition.get("metrics")),
             plots=_resolve_dep_or_out(definition.get("plots")),
+            hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
         )
         stages[name] = stage
 
@@ -148,8 +175,12 @@ def resolve_dvc_bin(project_dir: str | Path) -> str:
     return "dvc"  # fallback
 
 
-def get_dvc_status(project_dir: str | Path) -> dict[str, Any]:
-    """Run `dvc status --json` and return parsed output."""
+def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
+    """Run `dvc status --json` and return parsed output.
+    
+    Returns None if the command could not be executed (DVC not found, timeout, etc.).
+    Returns {} if DVC reports no changes.
+    """
     dvc_bin = resolve_dvc_bin(project_dir)
     try:
         result = subprocess.run(
@@ -163,17 +194,27 @@ def get_dvc_status(project_dir: str | Path) -> dict[str, Any]:
             # dvc status returns non-zero when there are changes, that's fine
             # Only truly fail if there's no output at all
             if result.stdout.strip():
-                return json.loads(result.stdout)
-            return {}
+                parsed = json.loads(result.stdout)
+                print(f"[dvc-viewer] dvc status (rc={result.returncode}): {len(parsed)} stages with changes")
+                return parsed
+            print(f"[dvc-viewer] dvc status failed (rc={result.returncode}), no stdout. stderr: {result.stderr[:200]}")
+            return None
         output = result.stdout.strip()
         if not output or output == "{}":
+            print("[dvc-viewer] dvc status: no changes detected")
             return {}
-        return json.loads(output)
+        parsed = json.loads(output)
+        print(f"[dvc-viewer] dvc status (rc=0): {len(parsed)} stages with changes")
+        return parsed
     except FileNotFoundError:
-        # DVC not installed — fall back to lock-only analysis
-        return {}
-    except (subprocess.TimeoutExpired, json.JSONDecodeError):
-        return {}
+        print("[dvc-viewer] DVC not found")
+        return None
+    except subprocess.TimeoutExpired:
+        print("[dvc-viewer] dvc status timed out")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"[dvc-viewer] dvc status JSON decode error: {e}")
+        return None
 
 
 def build_pipeline(project_dir: str | Path) -> Pipeline:
@@ -190,16 +231,31 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
 
     # 3. Get current status (which stages need re-running)
     status = get_dvc_status(project_dir)
-    stages_needing_rerun = set(status.keys()) if status else set()
+    
+    if status is None:
+        # DVC status failed — cannot determine state, mark locked stages as needs_rerun
+        # to be safe (better to show amber than incorrect green)
+        print("[dvc-viewer] Status unavailable, marking all locked stages as needs_rerun")
+        for name, stage in pipeline.stages.items():
+            if name in locked_stages:
+                stage.state = "needs_rerun"
+            else:
+                stage.state = "never_run"
+    else:
+        stages_needing_rerun = set(status.keys()) if status else set()
+        print(f"[dvc-viewer] Stages needing rerun: {stages_needing_rerun}")
+        print(f"[dvc-viewer] Locked stages: {locked_stages}")
+        print(f"[dvc-viewer] All stages: {set(pipeline.stages.keys())}")
 
-    # 4. Assign states
-    for name, stage in pipeline.stages.items():
-        if name not in locked_stages:
-            stage.state = "never_run"
-        elif name in stages_needing_rerun:
-            stage.state = "needs_rerun"
-        else:
-            stage.state = "valid"
+        # 4. Assign states
+        for name, stage in pipeline.stages.items():
+            if name not in locked_stages:
+                stage.state = "never_run"
+            elif name in stages_needing_rerun:
+                stage.state = "needs_rerun"
+            else:
+                stage.state = "valid"
+            print(f"[dvc-viewer]   {name}: {stage.state}")
 
     # 5. Build edges: if stage B depends on a file that is stage A's output
     output_to_stage: dict[str, str] = {}
@@ -242,18 +298,22 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
 
     nodes = []
     for name, stage in pipeline.stages.items():
-        nodes.append(
-            {
-                "id": name,
-                "cmd": stage.cmd,
-                "deps": [_file_status(d, stage.state) for d in stage.deps],
-                "outs": [_file_status(o, stage.state) for o in stage.outs],
-                "params": stage.params,
-                "metrics": [_file_status(m, stage.state) for m in stage.metrics],
-                "plots": [_file_status(p, stage.state) for p in stage.plots],
-                "state": stage.state,
-            }
-        )
+        node_dict: dict[str, Any] = {
+            "id": name,
+            "cmd": stage.cmd,
+            "deps": [_file_status(d, stage.state) for d in stage.deps],
+            "outs": [_file_status(o, stage.state) for o in stage.outs],
+            "params": stage.params,
+            "metrics": [_file_status(m, stage.state) for m in stage.metrics],
+            "plots": [_file_status(p, stage.state) for p in stage.plots],
+            "state": stage.state,
+        }
+        if stage.hydra_config:
+            node_dict["hydra_config"] = stage.hydra_config
+            node_dict["hydra_config_exists"] = (
+                (project_dir / stage.hydra_config).exists()
+            )
+        nodes.append(node_dict)
 
     edges = []
     for edge in pipeline.edges:
