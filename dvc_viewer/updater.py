@@ -8,12 +8,38 @@ to include the hasher stage and hash dependencies.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 import yaml
 from pathlib import Path
 from typing import Any
 
 from .hasher import find_transitive_dependencies, compute_aggregate_hash
+
+
+def _find_project_python(project_dir: Path) -> str:
+    """Resolve the best Python interpreter for the project.
+
+    Priority:
+    1. Active virtualenv ($VIRTUAL_ENV/bin/python)
+    2. Conventional venv directories (.venv, venv, .env, env)
+    3. System python3 fallback
+    """
+    # 1. Active virtualenv
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        candidate = Path(venv) / "bin" / "python"
+        if candidate.exists():
+            return str(candidate)
+    # 2. Conventional venv directories in project
+    for dirname in (".venv", "venv", ".env", "env"):
+        candidate = project_dir / dirname / "bin" / "python"
+        if candidate.exists():
+            return str(candidate)
+    # 3. System fallback
+    return shutil.which("python3") or shutil.which("python") or "python3"
+
 
 def update_dvc_yaml(project_dir: Path) -> None:
     """
@@ -125,6 +151,29 @@ def update_dvc_yaml(project_dir: Path) -> None:
             current_deps.append(hash_dep)
             stage["deps"] = current_deps
             modified = True
+
+    # --- Hook execution ---
+    hooks_dir = project_dir / ".dvc-viewer" / "hooks"
+    post_hash_hook = hooks_dir / "post_hash.py"
+    if post_hash_hook.exists():
+        python = _find_project_python(project_dir)
+        print(f"   🪝 Running post_hash hook: {post_hash_hook}")
+        try:
+            result = subprocess.run(
+                [python, str(post_hash_hook)],
+                cwd=str(project_dir),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if result.stdout.strip():
+                for line in result.stdout.strip().splitlines():
+                    print(f"      {line}")
+        except subprocess.CalledProcessError as e:
+            print(f"   ⚠️ post_hash hook failed (non-blocking): {e}")
+            if e.stderr:
+                for line in e.stderr.strip().splitlines():
+                    print(f"      {line}")
 
     if modified:
         print("   💾 Updating dvc.yaml...")

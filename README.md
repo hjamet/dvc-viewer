@@ -56,6 +56,30 @@ The web interface opens automatically at [http://localhost:8686](http://localhos
 - DVC installed and accessible in `$PATH`
 - A project with a `dvc.yaml` file
 
+## 🪝 Hooks
+
+DVC-Viewer supports **project-level hooks** — scripts that run automatically after specific operations.
+
+### `post_hash` hook
+
+Create `.dvc-viewer/hooks/post_hash.py` in your project. It runs after every `dvc-viewer hash`.
+
+```bash
+mkdir -p .dvc-viewer/hooks
+cat > .dvc-viewer/hooks/post_hash.py << 'EOF'
+"""Example post_hash hook — runs after code hashing."""
+print("✅ Post-hash hook executed!")
+EOF
+```
+
+**Python resolution** — the hook runs with the project's Python, resolved in order:
+
+1. Active virtualenv (`$VIRTUAL_ENV`)
+2. Project venv (`.venv/`, `venv/`, `.env/`, `env/`)
+3. System `python3`
+
+**Error handling** — if the hook fails, a warning is printed but `dvc-viewer hash` always succeeds. Hooks never block the pipeline.
+
 ## 📄 License
 
 MIT
