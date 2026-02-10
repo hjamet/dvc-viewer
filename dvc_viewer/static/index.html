@@ -1642,7 +1642,7 @@
 
             const STATE_COLORS = {
                 valid: { bg: '#064e3b', border: '#10b981', text: '#ecfdf5', glow: 'rgba(16,185,129,0.5)' },
-                needs_rerun: { bg: '#422006', border: '#fbbf24', text: '#fef9c3', glow: 'rgba(251,191,36,0.55)' },
+                needs_rerun: { bg: '#713f12', border: '#facc15', text: '#fef9c3', glow: 'rgba(250,204,21,0.55)' },
                 failed: { bg: '#450a0a', border: '#f43f5e', text: '#fff1f2', glow: 'rgba(244,63,94,0.6)' },
                 never_run: { bg: '#1e293b', border: '#64748b', text: '#f1f5f9', glow: 'rgba(100,116,139,0.3)' },
             };
@@ -2829,9 +2829,10 @@
                 node.removeStyle();
 
                 if (success) {
-                    // Try to restore to its ACTUAL state from data (don't assume valid!)
-                    const state = node.data('state') || 'valid';
-                    const sc = STATE_COLORS[state] || STATE_COLORS.valid;
+                    // Stage just succeeded → assume valid (green) immediately.
+                    // Note: node.data('state') is stale here (still pre-run value).
+                    // The final refreshPipeline() after the stream ends will correct it.
+                    const sc = STATE_COLORS.valid;
                     node.data({ bgColor: sc.bg, borderColor: sc.border, textColor: sc.text, glowColor: sc.glow });
                 } else {
                     // Error: use dedicated failed colors
