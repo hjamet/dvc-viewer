@@ -33,15 +33,18 @@
             --accent-glow: rgba(99, 102, 241, 0.15);
 
             /* State colors */
-            --state-valid: #22c55e;
-            --state-valid-bg: rgba(34, 197, 94, 0.12);
-            --state-valid-glow: rgba(34, 197, 94, 0.4);
-            --state-rerun: #f59e0b;
-            --state-rerun-bg: rgba(245, 158, 11, 0.12);
-            --state-rerun-glow: rgba(245, 158, 11, 0.4);
+            --state-valid: #10b981;
+            --state-valid-bg: rgba(16, 185, 129, 0.1);
+            --state-valid-glow: rgba(16, 185, 129, 0.35);
+            --state-rerun: #fbbf24;
+            --state-rerun-bg: rgba(251, 191, 36, 0.1);
+            --state-rerun-glow: rgba(251, 191, 36, 0.35);
+            --state-failed: #f43f5e;
+            --state-failed-bg: rgba(244, 63, 94, 0.1);
+            --state-failed-glow: rgba(244, 63, 94, 0.45);
             --state-never: #64748b;
-            --state-never-bg: rgba(100, 116, 139, 0.12);
-            --state-never-glow: rgba(100, 116, 139, 0.3);
+            --state-never-bg: rgba(100, 116, 139, 0.1);
+            --state-never-glow: rgba(100, 116, 139, 0.25);
         }
 
         * {
@@ -140,6 +143,11 @@
         .legend-dot.never {
             background: var(--state-never);
             color: var(--state-never);
+        }
+
+        .legend-dot.failed {
+            background: var(--state-failed);
+            color: var(--state-failed);
         }
 
         /* ─── Main layout ─── */
@@ -279,6 +287,18 @@
         .state-badge.never_run {
             background: var(--state-never-bg);
             color: var(--state-never);
+        }
+
+        .state-badge.failed {
+            background: var(--state-failed-bg);
+            color: var(--state-failed);
+            box-shadow: 0 0 12px var(--state-failed-glow);
+            border: 1px solid var(--state-failed);
+        }
+
+        .legend-dot.failed {
+            background: var(--state-failed);
+            color: var(--state-failed);
         }
 
         .sidebar-command {
@@ -1514,6 +1534,11 @@
                     <span class="legend-dot never"></span>
                     Never run
                 </div>
+                <div class="legend-item">
+                    <span class="legend-dot failed"
+                        style="background: var(--state-failed); color: var(--state-failed);"></span>
+                    Failed
+                </div>
             </div>
         </div>
         <button class="run-btn" id="btn-run-all" title="Run entire pipeline">
@@ -1622,14 +1647,16 @@
 
             // ─── State colors ───
             const STATE_COLORS = {
-                valid: { bg: '#166534', border: '#22c55e', text: '#f0fdf4', glow: 'rgba(34,197,94,0.5)' },
-                needs_rerun: { bg: '#78350f', border: '#f59e0b', text: '#fefce8', glow: 'rgba(245,158,11,0.5)' },
-                never_run: { bg: '#1e293b', border: '#64748b', text: '#cbd5e1', glow: 'rgba(100,116,139,0.3)' },
+                valid: { bg: '#064e3b', border: '#10b981', text: '#ecfdf5', glow: 'rgba(16,185,129,0.5)' },
+                needs_rerun: { bg: '#451a03', border: '#fbbf24', text: '#fffbeb', glow: 'rgba(251,191,36,0.5)' },
+                failed: { bg: '#450a0a', border: '#f43f5e', text: '#fff1f2', glow: 'rgba(244,63,94,0.6)' },
+                never_run: { bg: '#1e293b', border: '#94a3b8', text: '#f1f5f9', glow: 'rgba(148,163,184,0.3)' },
             };
 
             const STATE_LABELS = {
                 valid: 'Valid',
                 needs_rerun: 'Needs rerun',
+                failed: 'Failed',
                 never_run: 'Never run',
             };
 
@@ -2271,6 +2298,35 @@
         `;
             }
 
+            // ─── Watch for file changes (Auto-Refresh) ───
+            function initWatcher() {
+                const source = new EventSource('/api/watch');
+                source.addEventListener('reload', async () => {
+                    console.log('🔄 dvc.yaml or dvc.lock changed, refreshing pipeline...');
+                    if (!isRunning) {
+                        const data = await fetchPipeline();
+                        if (data.error) return;
+
+                        // If it's a structural change (nodes or edges count), rebuild the whole thing
+                        const currentNodes = cy ? cy.nodes().length : 0;
+                        const currentEdges = cy ? cy.edges().length : 0;
+
+                        if (data.nodes.length !== currentNodes || data.edges.length !== currentEdges) {
+                            const elements = buildElements(data);
+                            if (cy) cy.destroy();
+                            initGraph(elements);
+                        } else {
+                            await refreshPipeline();
+                        }
+                        updateStats(data);
+                    }
+                });
+                source.onerror = () => {
+                    source.close();
+                    setTimeout(initWatcher, 5000); // Retry after 5s
+                };
+            }
+
             // ─── Boot ───
             async function boot() {
                 const loading = document.getElementById('loading');
@@ -2281,6 +2337,7 @@
                     const elements = buildElements(data);
                     initGraph(elements);
                     updateStats(data);
+                    initWatcher();
 
                     setTimeout(() => loading.classList.add('hidden'), 400);
                 } catch (err) {
@@ -2778,8 +2835,9 @@
                 node.removeStyle();
 
                 if (success) {
-                    // Restore to valid colors
-                    const sc = STATE_COLORS.valid;
+                    // Try to restore to its ACTUAL state from data (don't assume valid!)
+                    const state = node.data('state') || 'valid';
+                    const sc = STATE_COLORS[state] || STATE_COLORS.valid;
                     node.data({ bgColor: sc.bg, borderColor: sc.border, glowColor: sc.glow });
                 } else {
                     // Error: red colors
@@ -2905,6 +2963,9 @@
                                     failedStage = data.stage;
                                     _errorStages.add(data.stage);
                                 }
+                                // Refresh pipeline data immediately to show updated status for other nodes
+                                refreshPipeline();
+
                                 // Mark outputs of this stage as updated
                                 if (data.success && cy) {
                                     const n = cy.getElementById(data.stage);

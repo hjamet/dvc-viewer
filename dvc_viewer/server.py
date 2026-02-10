@@ -32,6 +32,10 @@ _project_dir: str = os.environ.get("DVC_VIEWER_PROJECT_DIR", os.getcwd())
 
 # Resolve the DVC binary path (checks system PATH, project .venv, our venv)
 _dvc_bin = resolve_dvc_bin(_project_dir)
+ 
+# File watching state
+_last_dvc_yaml_time = 0
+_last_dvc_lock_time = 0
 
 # Serve static files
 _static_dir = Path(__file__).parent / "static"
