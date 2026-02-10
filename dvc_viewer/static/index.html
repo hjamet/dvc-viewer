@@ -2228,32 +2228,19 @@
                 node.scratch('_animating', false);
                 node.stop(true, true);
 
+                // Clear animation bypass styles so data-mapped stylesheet takes over
+                node.removeStyle();
+
                 if (success) {
                     // Restore to valid colors
                     const sc = STATE_COLORS.valid;
                     node.data({ bgColor: sc.bg, borderColor: sc.border, glowColor: sc.glow });
-                    node.style({
-                        'background-color': sc.bg,
-                        'border-color': sc.border,
-                        'border-width': 2,
-                        'shadow-color': sc.glow,
-                        'shadow-blur': 20,
-                        'shadow-opacity': 0.6,
-                    });
                 } else {
                     // Error: red colors
                     node.data({
                         bgColor: 'rgba(239, 68, 68, 0.15)',
                         borderColor: '#ef4444',
                         glowColor: 'rgba(239, 68, 68, 0.6)',
-                    });
-                    node.style({
-                        'background-color': 'rgba(239, 68, 68, 0.15)',
-                        'border-color': '#ef4444',
-                        'border-width': 2,
-                        'shadow-color': 'rgba(239, 68, 68, 0.6)',
-                        'shadow-blur': 20,
-                        'shadow-opacity': 0.8,
                     });
                 }
             }
@@ -2456,6 +2443,7 @@
                                 continue;
                             }
                             const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
+                            cyNode.removeStyle();  // Clear any bypass styles from animations
                             cyNode.data({
                                 state: node.state,
                                 deps: node.deps,
