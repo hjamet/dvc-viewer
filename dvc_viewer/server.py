@@ -633,6 +633,60 @@ async def run_pipeline_stream(
     )
 
 
+@app.get("/api/watch")
+async def watch_updates(request: Request):
+    """Stream 'reload' events whenever dvc.yaml or dvc.lock changes."""
+    import asyncio
+
+    global _last_dvc_yaml_time, _last_dvc_lock_time
+
+    async def event_generator():
+        global _last_dvc_yaml_time, _last_dvc_lock_time
+
+        project = Path(_project_dir).resolve()
+        yaml_path = project / "dvc.yaml"
+        lock_path = project / "dvc.lock"
+
+        # Initialize mtimes if not set
+        if _last_dvc_yaml_time == 0 and yaml_path.exists():
+            _last_dvc_yaml_time = yaml_path.stat().st_mtime
+        if _last_dvc_lock_time == 0 and lock_path.exists():
+            _last_dvc_lock_time = lock_path.stat().st_mtime
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            await asyncio.sleep(1.5)
+
+            changed = False
+
+            if yaml_path.exists():
+                mtime = yaml_path.stat().st_mtime
+                if mtime > _last_dvc_yaml_time:
+                    _last_dvc_yaml_time = mtime
+                    changed = True
+
+            if lock_path.exists():
+                mtime = lock_path.stat().st_mtime
+                if mtime > _last_dvc_lock_time:
+                    _last_dvc_lock_time = mtime
+                    changed = True
+
+            if changed:
+                yield f"event: reload\ndata: {json.dumps({'time': _last_dvc_yaml_time})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/file/history")
 async def file_history(path: str = Query(..., description="Relative file path")):
     """Get git commit history for a file."""
