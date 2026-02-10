@@ -2959,8 +2959,6 @@
                                     failedStage = data.stage;
                                     _errorStages.add(data.stage);
                                 }
-                                // Refresh pipeline data immediately to show updated status for other nodes
-                                refreshPipeline();
 
                                 // Mark outputs of this stage as updated
                                 if (data.success && cy) {
