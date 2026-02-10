@@ -1998,34 +1998,20 @@
                             }
 
                             const params = result.params || [];
-                            // Store original values for diff
-                            const originals = {};
-                            params.forEach(p => { originals[p.key] = p.value; });
+                            const sources = result.sources || [configPath];
+
+                            // Store original values + source for diff
+                            const originals = {};   // key → value
+                            const paramSources = {}; // key → source path
+                            params.forEach(p => {
+                                originals[p.key] = p.value;
+                                paramSources[p.key] = p.source || configPath;
+                            });
 
                             container.innerHTML = '';
 
-                            // Path header
-                            const pathDiv = document.createElement('div');
-                            pathDiv.className = 'hydra-config-path';
-                            pathDiv.innerHTML = `📁 <span class="path-text">${escapeHtml(configPath)}</span>`;
-                            container.appendChild(pathDiv);
-
-                            // Group params by top-level key
-                            const groups = {};
-                            const topLevel = [];
-                            params.forEach(p => {
-                                const dotIdx = p.key.indexOf('.');
-                                if (dotIdx > -1) {
-                                    const group = p.key.substring(0, dotIdx);
-                                    if (!groups[group]) groups[group] = [];
-                                    groups[group].push({ ...p, shortKey: p.key.substring(dotIdx + 1) });
-                                } else {
-                                    topLevel.push({ ...p, shortKey: p.key });
-                                }
-                            });
-
                             // Input registry for collecting values on save
-                            const inputRegistry = {}; // key -> {getValue()}
+                            const inputRegistry = {}; // key → {getValue(), source}
 
                             function renderParam(param, parentEl) {
                                 const row = document.createElement('div');
@@ -2052,7 +2038,7 @@
                                     toggle.appendChild(thumb);
                                     row.appendChild(toggle);
                                     cb.addEventListener('change', checkChanges);
-                                    inputRegistry[param.key] = { getValue: () => cb.checked, el: cb };
+                                    inputRegistry[param.key] = { getValue: () => cb.checked, source: param.source || configPath };
                                 } else if (param.type === 'list') {
                                     const listSpan = document.createElement('span');
                                     listSpan.className = 'hydra-list-value';
@@ -2076,7 +2062,7 @@
                                         checkChanges();
                                     });
                                     row.appendChild(input);
-                                    inputRegistry[param.key] = { getValue: () => input.value, el: input };
+                                    inputRegistry[param.key] = { getValue: () => input.value, source: param.source || configPath };
                                 }
 
                                 const typeBadge = document.createElement('span');
@@ -2087,19 +2073,47 @@
                                 parentEl.appendChild(row);
                             }
 
-                            // Render top-level params
-                            topLevel.forEach(p => renderParam(p, container));
+                            // Group params by source file, then by top-level key within each source
+                            for (const sourcePath of sources) {
+                                const sourceParams = params.filter(p => (p.source || configPath) === sourcePath);
+                                if (sourceParams.length === 0) continue;
 
-                            // Render grouped params
-                            for (const [groupName, groupParams] of Object.entries(groups)) {
-                                const groupDiv = document.createElement('div');
-                                groupDiv.className = 'hydra-group';
-                                const groupHeader = document.createElement('div');
-                                groupHeader.className = 'hydra-group-header';
-                                groupHeader.textContent = groupName;
-                                groupDiv.appendChild(groupHeader);
-                                groupParams.forEach(p => renderParam(p, groupDiv));
-                                container.appendChild(groupDiv);
+                                // Source file header
+                                const sourceDiv = document.createElement('div');
+                                sourceDiv.style.marginBottom = '8px';
+                                const sourceHeader = document.createElement('div');
+                                sourceHeader.className = 'hydra-config-path';
+                                const basename = sourcePath.split('/').pop();
+                                sourceHeader.innerHTML = `📁 <span class="path-text" title="${escapeHtml(sourcePath)}">${escapeHtml(basename)}</span>`;
+                                sourceDiv.appendChild(sourceHeader);
+
+                                // Group by top-level key within this source
+                                const groups = {};
+                                const topLevel = [];
+                                sourceParams.forEach(p => {
+                                    const dotIdx = p.key.indexOf('.');
+                                    if (dotIdx > -1) {
+                                        const group = p.key.substring(0, dotIdx);
+                                        if (!groups[group]) groups[group] = [];
+                                        groups[group].push({ ...p, shortKey: p.key.substring(dotIdx + 1) });
+                                    } else {
+                                        topLevel.push({ ...p, shortKey: p.key });
+                                    }
+                                });
+
+                                topLevel.forEach(p => renderParam(p, sourceDiv));
+                                for (const [groupName, groupParams] of Object.entries(groups)) {
+                                    const groupDiv = document.createElement('div');
+                                    groupDiv.className = 'hydra-group';
+                                    const groupHeader = document.createElement('div');
+                                    groupHeader.className = 'hydra-group-header';
+                                    groupHeader.textContent = groupName;
+                                    groupDiv.appendChild(groupHeader);
+                                    groupParams.forEach(p => renderParam(p, groupDiv));
+                                    sourceDiv.appendChild(groupDiv);
+                                }
+
+                                container.appendChild(sourceDiv);
                             }
 
                             // Actions bar
@@ -2139,13 +2153,13 @@
                             }
 
                             saveBtn.addEventListener('click', async () => {
-                                // Collect only changed params
+                                // Collect only changed params with their source
                                 const changedParams = {};
                                 for (const [key, reg] of Object.entries(inputRegistry)) {
                                     const current = reg.getValue();
                                     const orig = originals[key];
                                     if (String(current) !== String(orig ?? '')) {
-                                        changedParams[key] = current;
+                                        changedParams[key] = { value: current, source: reg.source };
                                     }
                                 }
                                 if (Object.keys(changedParams).length === 0) return;
@@ -2164,11 +2178,9 @@
                                     const putData = await putRes.json();
 
                                     if (putData.success) {
-                                        // Update originals to the new values
                                         for (const [key, val] of Object.entries(changedParams)) {
-                                            originals[key] = val;
+                                            originals[key] = val.value;
                                         }
-                                        // Clear modified highlights
                                         container.querySelectorAll('.hydra-param-input.modified').forEach(el => el.classList.remove('modified'));
                                         saveBtn.innerHTML = '✅ Saved!';
                                         saveBtn.classList.add('saved');

@@ -160,8 +160,8 @@ async def file_raw(path: str = Query(..., description="Relative file path")):
     return FileResponse(path=str(target), media_type=mime)
 
 
-def _flatten_yaml(data: dict | list | None, prefix: str = "") -> list[dict]:
-    """Flatten a nested YAML dict into a list of {key, value, type} entries."""
+def _flatten_yaml(data: dict | list | None, prefix: str = "", source: str = "") -> list[dict]:
+    """Flatten a nested YAML dict into a list of {key, value, type, source} entries."""
     result = []
     if data is None:
         return result
@@ -169,20 +169,190 @@ def _flatten_yaml(data: dict | list | None, prefix: str = "") -> list[dict]:
         for k, v in data.items():
             full_key = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
             if isinstance(v, dict):
-                result.extend(_flatten_yaml(v, full_key))
+                result.extend(_flatten_yaml(v, full_key, source))
             elif isinstance(v, list):
-                result.append({"key": full_key, "value": v, "type": "list"})
+                result.append({"key": full_key, "value": v, "type": "list", "source": source})
             elif isinstance(v, bool):
-                result.append({"key": full_key, "value": v, "type": "bool"})
+                result.append({"key": full_key, "value": v, "type": "bool", "source": source})
             elif isinstance(v, int):
-                result.append({"key": full_key, "value": v, "type": "int"})
+                result.append({"key": full_key, "value": v, "type": "int", "source": source})
             elif isinstance(v, float):
-                result.append({"key": full_key, "value": v, "type": "float"})
+                result.append({"key": full_key, "value": v, "type": "float", "source": source})
             elif v is None:
-                result.append({"key": full_key, "value": None, "type": "null"})
+                result.append({"key": full_key, "value": None, "type": "null", "source": source})
             else:
-                result.append({"key": full_key, "value": str(v), "type": "str"})
+                result.append({"key": full_key, "value": str(v), "type": "str", "source": source})
     return result
+
+
+def _parse_default_entry(entry) -> tuple[str, str] | None:
+    """Parse a single Hydra defaults entry into (group, name).
+
+    Examples:
+      '/config'              → ('', 'config')
+      'override /algo: colbert' → ('algo', 'colbert')
+      'dataset: musique'     → ('dataset', 'musique')
+      {'dataset': 'musique'} → ('dataset', 'musique')
+      '_self_'               → None (handled separately)
+    """
+    if isinstance(entry, dict):
+        for group, name in entry.items():
+            if group == "_self_":
+                return None
+            # Handle 'override /algo' style dict keys
+            g = str(group)
+            if g.startswith("override "):
+                g = g[len("override "):]
+            g = g.strip().lstrip("/")
+            return (g, str(name))
+        return None
+
+    if not isinstance(entry, str):
+        return None
+
+    entry = entry.strip()
+    if entry == "_self_":
+        return None
+
+    # Remove 'override ' prefix if present
+    if entry.startswith("override "):
+        entry = entry[len("override "):]
+
+    # Format: /config or /algo: colbert or dataset: musique
+    if ":" in entry:
+        group_part, name = entry.split(":", 1)
+        group_part = group_part.strip().lstrip("/")
+        name = name.strip()
+        return (group_part, name)
+    else:
+        # Simple reference like '/config'
+        ref = entry.lstrip("/")
+        return ("", ref)
+
+
+def _resolve_hydra_defaults(
+    config_path: Path,
+    configs_dir: Path,
+    visited: set[str] | None = None,
+) -> list[tuple[str, dict]]:
+    """Recursively resolve Hydra defaults into an ordered list of (source_rel_path, data).
+
+    The result is ordered from base → leaf so that later entries override earlier ones
+    (matching Hydra's merge semantics).
+    """
+    if visited is None:
+        visited = set()
+
+    abs_path = config_path.resolve()
+    path_key = str(abs_path)
+    if path_key in visited:
+        return []
+    visited.add(path_key)
+
+    if not config_path.exists():
+        return []
+
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+
+    if not isinstance(raw, dict):
+        return []
+
+    defaults = raw.get("defaults", [])
+    if not isinstance(defaults, list):
+        defaults = []
+
+    # Determine _self_ position — controls where the file's own keys merge
+    self_idx = None
+    for i, entry in enumerate(defaults):
+        if entry == "_self_" or (isinstance(entry, dict) and "_self_" in entry):
+            self_idx = i
+            break
+
+    # Resolve defaults entries (excluding _self_)
+    resolved_defaults: list[tuple[str, dict]] = []
+    for entry in defaults:
+        parsed = _parse_default_entry(entry)
+        if parsed is None:
+            continue  # _self_ or unparseable
+
+        group, name = parsed
+        if group:
+            ref_path = configs_dir / group / f"{name}.yaml"
+        else:
+            ref_path = configs_dir / f"{name}.yaml"
+
+        # Recursively resolve
+        resolved_defaults.extend(
+            _resolve_hydra_defaults(ref_path, configs_dir, visited)
+        )
+
+    # Build self data (strip 'defaults' key — it's metadata, not params)
+    self_data = {k: v for k, v in raw.items() if k != "defaults"}
+
+    # Compute relative path from project dir for display
+    try:
+        rel = str(config_path.relative_to(configs_dir.parent))
+    except ValueError:
+        rel = str(config_path)
+
+    # Merge order: if _self_ is early, file's own keys go before defaults
+    # Default Hydra behavior: _self_ last → file keys override defaults
+    if self_idx is not None and self_idx == 0:
+        return [(rel, self_data)] + resolved_defaults
+    else:
+        return resolved_defaults + [(rel, self_data)]
+
+
+@app.get("/api/hydra-config")
+async def get_hydra_config(path: str = Query(..., description="Relative path to Hydra config YAML")):
+    """Read a Hydra config YAML with resolved defaults and return structured parameters."""
+    target = _safe_resolve(path)
+    if target is None:
+        return JSONResponse(content={"error": "Config file not found"}, status_code=404)
+    try:
+        project = Path(_project_dir).resolve()
+        configs_dir = project / "configs"
+
+        # Resolve defaults chain
+        sources_data = _resolve_hydra_defaults(target, configs_dir)
+
+        if not sources_data:
+            # Fallback: just read the file directly
+            content = target.read_text(encoding="utf-8")
+            parsed = yaml.safe_load(content) or {}
+            if isinstance(parsed, dict):
+                parsed.pop("defaults", None)
+            params = _flatten_yaml(parsed, source=path) if isinstance(parsed, dict) else []
+            return JSONResponse(content={"params": params, "path": path, "sources": [path]})
+
+        # Flatten params from each source, keeping track of origin
+        all_params: list[dict] = []
+        seen_keys: dict[str, int] = {}  # key → index in all_params
+        sources: list[str] = []
+
+        for source_path, data in sources_data:
+            if source_path not in sources:
+                sources.append(source_path)
+            flat = _flatten_yaml(data, source=source_path)
+            for param in flat:
+                key = param["key"]
+                if key in seen_keys:
+                    # Override: replace with later value
+                    all_params[seen_keys[key]] = param
+                else:
+                    seen_keys[key] = len(all_params)
+                    all_params.append(param)
+
+        return JSONResponse(content={
+            "params": all_params,
+            "path": path,
+            "sources": sources,
+        })
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 def _apply_params(data: dict, params: dict) -> dict:
@@ -216,33 +386,20 @@ def _apply_params(data: dict, params: dict) -> dict:
                     except (ValueError, TypeError):
                         pass
                 elif old is None:
-                    # Keep None if the string is literally "null" or empty
                     if isinstance(new_value, str) and new_value.strip().lower() in ("null", "none", ""):
                         new_value = None
                 target[last] = new_value
     return data
 
 
-@app.get("/api/hydra-config")
-async def get_hydra_config(path: str = Query(..., description="Relative path to Hydra config YAML")):
-    """Read a Hydra config YAML and return structured parameters."""
-    target = _safe_resolve(path)
-    if target is None:
-        return JSONResponse(content={"error": "Config file not found"}, status_code=404)
-    try:
-        content = target.read_text(encoding="utf-8")
-        parsed = yaml.safe_load(content) or {}
-        params = _flatten_yaml(parsed) if isinstance(parsed, dict) else []
-        return JSONResponse(content={"params": params, "path": path})
-    except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
 @app.put("/api/hydra-config")
 async def put_hydra_config(request: Request):
-    """Apply parameter edits to a Hydra config YAML file.
+    """Apply parameter edits to Hydra config YAML file(s).
 
-    Expects JSON body: {"path": "...", "params": {"dot.key": newValue, ...}}
+    Expects JSON body:
+      {"path": "...", "params": {"dot.key": {"value": newValue, "source": "configs/..."}}}
+    OR (legacy, no source info):
+      {"path": "...", "params": {"dot.key": newValue, ...}}
     """
     body = await request.json()
     path = body.get("path")
@@ -250,18 +407,38 @@ async def put_hydra_config(request: Request):
     if not path or not isinstance(params, dict):
         return JSONResponse(content={"error": "Missing 'path' or 'params'"}, status_code=400)
 
-    target = _safe_resolve(path)
-    if target is None:
-        return JSONResponse(content={"error": "Config file not found"}, status_code=404)
+    project = Path(_project_dir).resolve()
 
     try:
-        content = target.read_text(encoding="utf-8")
-        data = yaml.safe_load(content) or {}
-        if not isinstance(data, dict):
-            return JSONResponse(content={"error": "Config is not a YAML mapping"}, status_code=422)
-        _apply_params(data, params)
-        output = yaml.dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
-        target.write_text(output, encoding="utf-8")
+        # Group edits by source file
+        edits_by_source: dict[str, dict[str, Any]] = {}
+
+        for key, val in params.items():
+            if isinstance(val, dict) and "source" in val:
+                # New format: {key: {value: ..., source: ...}}
+                source = val["source"]
+                edits_by_source.setdefault(source, {})[key] = val["value"]
+            else:
+                # Legacy format: {key: value} — edit the main file
+                edits_by_source.setdefault(path, {})[key] = val
+
+        # Apply edits to each source file
+        for source_path, source_params in edits_by_source.items():
+            target = (project / source_path).resolve()
+            # Security: ensure within project
+            if not str(target).startswith(str(project)):
+                continue
+            if not target.exists() or not target.is_file():
+                continue
+
+            content = target.read_text(encoding="utf-8")
+            data = yaml.safe_load(content) or {}
+            if not isinstance(data, dict):
+                continue
+            _apply_params(data, source_params)
+            output = yaml.dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
+            target.write_text(output, encoding="utf-8")
+
         return JSONResponse(content={"success": True, "path": path})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
