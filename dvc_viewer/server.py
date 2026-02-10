@@ -22,20 +22,15 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .parser import build_pipeline, pipeline_to_dict
+from .parser import build_pipeline, pipeline_to_dict, resolve_dvc_bin
 
 app = FastAPI(title="DVC Viewer", version="0.1.0")
 
 # The project dir is set at startup via environment variable
 _project_dir: str = os.environ.get("DVC_VIEWER_PROJECT_DIR", os.getcwd())
 
-# Resolve the DVC binary path
-_dvc_bin = shutil.which("dvc")
-if not _dvc_bin:
-    # Try the same venv as dvc-viewer
-    _venv_dvc = Path(sys.executable).parent / "dvc"
-    if _venv_dvc.exists():
-        _dvc_bin = str(_venv_dvc)
+# Resolve the DVC binary path (checks system PATH, project .venv, our venv)
+_dvc_bin = resolve_dvc_bin(_project_dir)
 
 # Serve static files
 _static_dir = Path(__file__).parent / "static"

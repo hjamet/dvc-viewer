@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -129,11 +131,29 @@ def parse_dvc_lock(project_dir: str | Path) -> set[str]:
     return set(stages.keys())
 
 
+def resolve_dvc_bin(project_dir: str | Path) -> str:
+    """Find the DVC binary, checking system PATH, project .venv, and our own venv."""
+    # 1. System PATH
+    found = shutil.which("dvc")
+    if found:
+        return found
+    # 2. Project's own .venv
+    project_venv = Path(project_dir) / ".venv" / "bin" / "dvc"
+    if project_venv.exists():
+        return str(project_venv)
+    # 3. Same venv as dvc-viewer itself
+    own_venv = Path(sys.executable).parent / "dvc"
+    if own_venv.exists():
+        return str(own_venv)
+    return "dvc"  # fallback
+
+
 def get_dvc_status(project_dir: str | Path) -> dict[str, Any]:
     """Run `dvc status --json` and return parsed output."""
+    dvc_bin = resolve_dvc_bin(project_dir)
     try:
         result = subprocess.run(
-            ["dvc", "status", "--json"],
+            [dvc_bin, "status", "--json"],
             capture_output=True,
             text=True,
             cwd=str(project_dir),
