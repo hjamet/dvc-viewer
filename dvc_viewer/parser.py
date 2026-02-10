@@ -31,7 +31,7 @@ class Stage:
     params: list[str] = field(default_factory=list)
     metrics: list[str] = field(default_factory=list)
     plots: list[str] = field(default_factory=list)
-    state: str = "never_run"  # valid | needs_rerun | never_run
+    state: str = "never_run"  # valid | needs_rerun | never_run | running
     hydra_config: str | None = None  # resolved relative path to config YAML
 
 
@@ -50,6 +50,9 @@ class Pipeline:
 
     stages: dict[str, Stage] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
+    is_running: bool = False
+    running_stage: str | None = None
+    running_pid: int | None = None
 
 
 def _resolve_dep_or_out(item: Any) -> list[str]:
@@ -208,6 +211,67 @@ def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
         return None
 
 
+def detect_running_stage(
+    project_dir: str | Path,
+    stages: dict[str, Stage],
+) -> tuple[bool, str | None, int | None]:
+    """Detect if a DVC run is in progress by reading .dvc/tmp/rwlock.
+
+    Returns (is_running, running_stage_name, pid).
+    The running stage is identified by matching write-locked files to stage outputs.
+    """
+    rwlock_path = Path(project_dir) / ".dvc" / "tmp" / "rwlock"
+    if not rwlock_path.exists():
+        return False, None, None
+
+    try:
+        raw = rwlock_path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return False, None, None
+        lock_data = json.loads(raw)
+    except (json.JSONDecodeError, OSError):
+        return False, None, None
+
+    write_locks: dict = lock_data.get("write", {})
+    if not write_locks:
+        return False, None, None
+
+    # Extract PID from any write lock entry
+    pid: int | None = None
+    for _path, info in write_locks.items():
+        if isinstance(info, dict) and "pid" in info:
+            pid = info["pid"]
+            break
+
+    # Verify the process is still alive
+    if pid is not None:
+        try:
+            os.kill(pid, 0)  # signal 0 = check if process exists
+        except (ProcessLookupError, PermissionError):
+            # Process is dead — stale lock file
+            return False, None, None
+
+    # Match write-locked files to stage outputs to find the running stage
+    project_path = Path(project_dir).resolve()
+    write_locked_files: set[str] = set()
+    for locked_path in write_locks:
+        # Convert absolute paths to relative
+        try:
+            rel = str(Path(locked_path).resolve().relative_to(project_path))
+        except ValueError:
+            rel = locked_path
+        write_locked_files.add(rel)
+
+    running_stage: str | None = None
+    for name, stage in stages.items():
+        stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
+        if stage_outputs & write_locked_files:
+            running_stage = name
+            break
+
+    return True, running_stage, pid
+
+
 def build_pipeline(project_dir: str | Path) -> Pipeline:
     """Build the full pipeline DAG from a DVC project directory."""
     project_dir = Path(project_dir)
@@ -217,26 +281,41 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
     stages = parse_dvc_yaml(project_dir)
     pipeline.stages = stages
 
-    # 2. Find which stages have been executed (have lock entries)
+    # 2. Detect if a DVC run is in progress
+    is_running, running_stage, running_pid = detect_running_stage(
+        project_dir, stages
+    )
+    pipeline.is_running = is_running
+    pipeline.running_stage = running_stage
+    pipeline.running_pid = running_pid
+
+    # 3. Find which stages have been executed (have lock entries)
     locked_stages = parse_dvc_lock(project_dir)
 
-    # 3. Get current status (which stages need re-running)
-    status = get_dvc_status(project_dir)
+    # 4. Get current status (which stages need re-running)
+    #    Skip dvc status if a run is in progress (the lock would make it fail)
+    if is_running:
+        status = None
+    else:
+        status = get_dvc_status(project_dir)
 
     if status is None:
-        # DVC status failed (e.g. lock held by running dvc repro).
-        # Mark locked stages as needs_rerun — better amber than incorrect green.
+        # DVC status unavailable (lock held or run in progress).
+        # Use dvc.lock to determine completed stages; mark running stage.
         for name, stage in pipeline.stages.items():
-            if name in locked_stages:
-                stage.state = "needs_rerun"
+            if name == running_stage:
+                stage.state = "running"
+            elif name in locked_stages:
+                stage.state = "valid"  # was completed before this run
             else:
                 stage.state = "never_run"
     else:
         stages_needing_rerun = set(status.keys()) if status else set()
 
-        # 4. Assign states
         for name, stage in pipeline.stages.items():
-            if name not in locked_stages:
+            if name == running_stage:
+                stage.state = "running"
+            elif name not in locked_stages:
                 stage.state = "never_run"
             elif name in stages_needing_rerun:
                 stage.state = "needs_rerun"
@@ -311,4 +390,10 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
             }
         )
 
-    return {"nodes": nodes, "edges": edges}
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "is_running": pipeline.is_running,
+        "running_stage": pipeline.running_stage,
+        "running_pid": pipeline.running_pid,
+    }

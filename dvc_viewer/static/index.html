@@ -1672,6 +1672,7 @@
                 needs_rerun: { bg: '#713f12', border: '#facc15', text: '#fef9c3', glow: 'rgba(250,204,21,0.55)' },
                 failed: { bg: '#450a0a', border: '#f43f5e', text: '#fff1f2', glow: 'rgba(244,63,94,0.6)' },
                 never_run: { bg: '#1e293b', border: '#64748b', text: '#f1f5f9', glow: 'rgba(100,116,139,0.3)' },
+                running: { bg: '#1e1b4b', border: '#818cf8', text: '#e0e7ff', glow: 'rgba(99,102,241,0.5)' },
             };
 
             const STATE_LABELS = {
@@ -1679,6 +1680,7 @@
                 needs_rerun: 'Needs rerun',
                 failed: 'Failed',
                 never_run: 'Never run',
+                running: 'Running',
             };
 
             let cy = null;
@@ -2306,60 +2308,149 @@
 
             // ─── Stats bar ───
             function updateStats(data) {
-                const counts = { valid: 0, needs_rerun: 0, never_run: 0 };
-                for (const n of data.nodes) counts[n.state]++;
+                const counts = { valid: 0, needs_rerun: 0, never_run: 0, running: 0 };
+                for (const n of data.nodes) counts[n.state] = (counts[n.state] || 0) + 1;
 
                 const bar = document.getElementById('stats-bar');
-                bar.innerHTML = `
+                let html = `
             <div class="stat-chip"><span class="count">${data.nodes.length}</span> stages</div>
             <div class="stat-chip"><span class="count">${data.edges.length}</span> edges</div>
             <div class="stat-chip"><span class="count" style="color: var(--state-valid)">${counts.valid}</span> valid</div>
             <div class="stat-chip"><span class="count" style="color: var(--state-rerun)">${counts.needs_rerun}</span> needs rerun</div>
-            <div class="stat-chip"><span class="count" style="color: var(--state-never)">${counts.never_run}</span> never run</div>
-        `;
+            <div class="stat-chip"><span class="count" style="color: var(--state-never)">${counts.never_run}</span> never run</div>`;
+                if (counts.running > 0) {
+                    html += `\n            <div class="stat-chip"><span class="count" style="color: #818cf8">${counts.running}</span> running</div>`;
+                }
+                bar.innerHTML = html;
             }
 
-            // ─── Watch for file changes (Auto-Refresh) ───
-            let _statusPollTimer = null;
+            // ─── Unified Pipeline Polling (data-driven) ───
+            let _prevIsRunning = false;
+            let _prevRunningStage = null;
+            let _pollTimer = null;
+            let _uiLaunchedRun = false;  // true when run was launched from UI
 
-            function initWatcher() {
-                const source = new EventSource('/api/watch');
-                source.addEventListener('reload', async () => {
-                    console.log('🔄 dvc.yaml or dvc.lock changed, refreshing pipeline...');
-                    if (!isRunning) {
-                        const data = await fetchPipeline();
-                        if (data.error) return;
+            function startPolling() {
+                if (_pollTimer) return;
+                _pollTimer = setInterval(pollPipeline, 1_000);
+            }
 
-                        // If it's a structural change (nodes or edges count), rebuild the whole thing
-                        const currentNodes = cy ? cy.nodes().length : 0;
-                        const currentEdges = cy ? cy.edges().length : 0;
+            async function pollPipeline() {
+                try {
+                    const data = await fetchPipeline();
+                    if (data.error) return;
 
-                        if (data.nodes.length !== currentNodes || data.edges.length !== currentEdges) {
-                            const elements = buildElements(data);
-                            if (cy) cy.destroy();
-                            initGraph(elements);
-                        } else {
-                            await refreshPipeline();
-                        }
+                    const nowRunning = data.is_running || false;
+                    const nowStage = data.running_stage || null;
+
+                    // Detect structural changes (nodes/edges added or removed)
+                    const currentNodes = cy ? cy.nodes().length : 0;
+                    const currentEdges = cy ? cy.edges().length : 0;
+                    if (data.nodes.length !== currentNodes || data.edges.length !== currentEdges) {
+                        const elements = buildElements(data);
+                        if (cy) cy.destroy();
+                        initGraph(elements);
                         updateStats(data);
+                        return;
                     }
-                });
-                source.onerror = () => {
-                    source.close();
-                    setTimeout(initWatcher, 5000); // Retry after 5s
-                };
 
-                // Periodic dvc status polling (catches dep/param/data changes)
-                startStatusPoll();
-            }
+                    // ── Run state transitions ──
+                    const allBtn = document.getElementById('btn-run-all');
+                    const stageBtn = document.getElementById('btn-run-stage');
+                    const stopBtn = document.getElementById('btn-stop');
 
-            function startStatusPoll() {
-                if (_statusPollTimer) return;
-                _statusPollTimer = setInterval(async () => {
-                    if (!isRunning) {
-                        await refreshPipeline(0); // No retries for background poll
+                    // Transition: not running → running (external run detected)
+                    if (nowRunning && !_prevIsRunning && !_uiLaunchedRun) {
+                        isRunning = true;
+                        allBtn.classList.add('running');
+                        allBtn.disabled = true;
+                        stageBtn.disabled = true;
+                        stopBtn.classList.add('visible');
+                        showToast(nowStage ? `Running: ${nowStage}` : 'Pipeline running…', 'running');
                     }
-                }, 1_000);
+
+                    // Stage changed during run
+                    if (nowRunning && nowStage !== _prevRunningStage) {
+                        // Stop animation on previous stage
+                        if (_prevRunningStage) {
+                            stopSingleNodeAnimation(_prevRunningStage, true);
+                        }
+                        // Start animation on new stage
+                        if (nowStage) {
+                            startSingleNodeAnimation(nowStage);
+                            showToast(`Running: ${nowStage}`, 'running');
+                        }
+                    }
+
+                    // Transition: running → not running
+                    if (!nowRunning && _prevIsRunning) {
+                        isRunning = false;
+                        allBtn.classList.remove('running');
+                        allBtn.disabled = false;
+                        stageBtn.disabled = false;
+                        stopBtn.classList.remove('visible');
+                        // Stop all animations
+                        if (cy) cy.nodes().forEach(n => {
+                            if (n.scratch('_animating')) {
+                                n.scratch('_animating', false);
+                                n.stop(true, true);
+                                n.removeStyle();
+                            }
+                        });
+                        if (!_uiLaunchedRun) {
+                            // External run finished
+                            showToast('Pipeline completed', 'success');
+                            setTimeout(hideToast, 4000);
+                        }
+                        _uiLaunchedRun = false;
+                    }
+
+                    _prevIsRunning = nowRunning;
+                    _prevRunningStage = nowStage;
+
+                    // ── Update all node states/colors from data ──
+                    for (const node of data.nodes) {
+                        const cyNode = cy.getElementById(node.id);
+                        if (!cyNode.length) continue;
+
+                        // Skip color update for nodes with active animation
+                        // (the animation handles their visual state)
+                        if (cyNode.scratch('_animating')) {
+                            cyNode.data({
+                                state: node.state,
+                                deps: node.deps,
+                                outs: node.outs,
+                                metrics: node.metrics,
+                                plots: node.plots,
+                            });
+                            continue;
+                        }
+
+                        const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
+                        cyNode.removeStyle();
+                        cyNode.data({
+                            state: node.state,
+                            deps: node.deps,
+                            outs: node.outs,
+                            metrics: node.metrics,
+                            plots: node.plots,
+                            bgColor: sc.bg,
+                            borderColor: sc.border,
+                            textColor: sc.text,
+                            glowColor: sc.glow,
+                        });
+                    }
+
+                    updateStats(data);
+
+                    // Refresh sidebar if a stage is selected
+                    if (selectedStage) {
+                        const updatedNode = data.nodes.find(n => n.id === selectedStage);
+                        if (updatedNode) showDetail(updatedNode);
+                    }
+                } catch (err) {
+                    // Silently ignore poll errors
+                }
             }
 
 
@@ -2373,7 +2464,21 @@
                     const elements = buildElements(data);
                     initGraph(elements);
                     updateStats(data);
-                    initWatcher();
+
+                    // Handle case where a run is already in progress at boot
+                    if (data.is_running && data.running_stage) {
+                        isRunning = true;
+                        document.getElementById('btn-run-all').classList.add('running');
+                        document.getElementById('btn-run-all').disabled = true;
+                        document.getElementById('btn-run-stage').disabled = true;
+                        document.getElementById('btn-stop').classList.add('visible');
+                        startSingleNodeAnimation(data.running_stage);
+                        showToast(`Running: ${data.running_stage}`, 'running');
+                        _prevIsRunning = true;
+                        _prevRunningStage = data.running_stage;
+                    }
+
+                    startPolling();
 
                     setTimeout(() => loading.classList.add('hidden'), 400);
                 } catch (err) {
@@ -2866,31 +2971,14 @@
                 if (!node.length) return;
                 node.scratch('_animating', false);
                 node.stop(true, true);
-
-                // Clear animation bypass styles so data-mapped stylesheet takes over
                 node.removeStyle();
-
-                if (success) {
-                    // Stage just succeeded → assume valid (green) immediately.
-                    // Note: node.data('state') is stale here (still pre-run value).
-                    // The final refreshPipeline() after the stream ends will correct it.
-                    const sc = STATE_COLORS.valid;
-                    node.data({ bgColor: sc.bg, borderColor: sc.border, textColor: sc.text, glowColor: sc.glow });
-                } else {
-                    // Error: use dedicated failed colors
-                    const sc = STATE_COLORS.failed;
-                    node.data({
-                        bgColor: sc.bg,
-                        borderColor: sc.border,
-                        textColor: sc.text,
-                        glowColor: sc.glow,
-                    });
-                }
+                // Let the next pollPipeline() cycle set the correct color from data
             }
 
             async function runPipeline(stage = null) {
                 if (isRunning) return;
                 isRunning = true;
+                _uiLaunchedRun = true;
 
                 const allBtn = document.getElementById('btn-run-all');
                 const stageBtn = document.getElementById('btn-run-stage');
@@ -2907,7 +2995,7 @@
                 _stageTimers = {};
                 clearAllNodeBadges();
                 if (!stage) {
-                    stageLogs = {};  // Clear all when running full pipeline
+                    stageLogs = {};
                 } else {
                     stageLogs[stage] = '';
                 }
@@ -2925,7 +3013,6 @@
                     const reader = res.body.getReader();
                     const decoder = new TextDecoder();
                     let buffer = '';
-                    let currentStage = null;
                     let pipelineSuccess = true;
                     let pipelineCancelled = false;
                     let failedStage = null;
@@ -2936,7 +3023,7 @@
 
                         buffer += decoder.decode(value, { stream: true });
                         const lines = buffer.split('\n');
-                        buffer = lines.pop(); // Keep incomplete line
+                        buffer = lines.pop();
 
                         let eventType = null;
                         for (const line of lines) {
@@ -2946,7 +3033,7 @@
                                 try {
                                     const data = JSON.parse(line.slice(6));
                                     handleSSEEvent(eventType, data);
-                                } catch (e) { /* ignore parse errors */ }
+                                } catch (e) { }
                                 eventType = null;
                             }
                         }
@@ -2955,10 +3042,8 @@
                     function handleSSEEvent(type, data) {
                         switch (type) {
                             case 'stage_start':
-                                currentStage = data.stage;
                                 if (!stageLogs[data.stage]) stageLogs[data.stage] = '';
                                 _stageTimers[data.stage] = { start: Date.now(), duration: null };
-                                showToast(`Running: ${data.stage}`, 'running');
                                 // Live elapsed timer in toast
                                 if (_toastInterval) clearInterval(_toastInterval);
                                 _toastInterval = setInterval(() => {
@@ -2968,7 +3053,7 @@
                                         document.getElementById('toast-text').textContent = `Running: ${data.stage} (${elapsed}…)`;
                                     }
                                 }, 1000);
-                                try { startSingleNodeAnimation(data.stage); } catch (e) { }
+                                // Note: animation is handled by pollPipeline via running_stage detection
                                 break;
 
                             case 'stage_skip':
@@ -2981,7 +3066,6 @@
                                     if (!stageLogs[data.stage]) stageLogs[data.stage] = '';
                                     stageLogs[data.stage] += data.line + '\n';
                                 }
-                                // Update sidebar if this stage is currently selected
                                 if (data.stage && data.stage === selectedStage) {
                                     const logPre = document.querySelector('.sidebar-logs-content');
                                     if (logPre) {
@@ -2992,73 +3076,29 @@
                                 break;
 
                             case 'stage_done':
-                                // Record duration
                                 if (_stageTimers[data.stage]) {
                                     _stageTimers[data.stage].duration = Date.now() - _stageTimers[data.stage].start;
                                 }
                                 if (_toastInterval) { clearInterval(_toastInterval); _toastInterval = null; }
-                                try {
-                                    stopSingleNodeAnimation(data.stage, data.success);
-                                } catch (e) { }
                                 if (!data.success) {
                                     pipelineSuccess = false;
                                     failedStage = data.stage;
                                     _errorStages.add(data.stage);
                                 }
-
-                                // Optimistically update completed stage data
+                                // Mark outputs as updated for badge display
                                 if (data.success && cy) {
                                     const n = cy.getElementById(data.stage);
                                     if (n.length) {
-                                        // Mark stage as valid
-                                        n.data('state', 'valid');
-                                        // Update deps/outs/metrics status to 'current'
-                                        const updateFileStatus = (files) => {
-                                            if (!files) return files;
-                                            return files.map(f => {
-                                                if (typeof f === 'object' && f.path) {
-                                                    return { ...f, exists: true, status: 'current' };
-                                                }
-                                                return f;
-                                            });
-                                        };
-                                        n.data('deps', updateFileStatus(n.data('deps')));
-                                        n.data('outs', updateFileStatus(n.data('outs')));
-                                        n.data('metrics', updateFileStatus(n.data('metrics')));
-                                        n.data('plots', updateFileStatus(n.data('plots')));
-                                        // Refresh sidebar if this stage is selected
-                                        if (selectedStage === data.stage) {
-                                            showDetail(n.data());
-                                        }
-                                    }
-                                }
-
-                                // Mark outputs of this stage as updated
-                                if (data.success && cy) {
-                                    const n = cy.getElementById(data.stage);
-                                    if (n.length) {
-                                        const outs = n.data('outs') || [];
-                                        const metrics = n.data('metrics') || [];
-                                        const plots = n.data('plots') || [];
-                                        const allFiles = [...outs, ...metrics, ...plots];
+                                        const allFiles = [...(n.data('outs') || []), ...(n.data('metrics') || []), ...(n.data('plots') || [])];
                                         allFiles.forEach(o => {
                                             const p = typeof o === 'string' ? o : o.path;
                                             if (p) _updatedOutputs.add(p);
                                         });
-
-                                        // Only add badge if there are inspectable files
-                                        const hasInspectable = allFiles.some(o => {
-                                            const p = typeof o === 'string' ? o : o.path;
-                                            return p && isInspectable(p);
-                                        });
-                                        if (hasInspectable) addNodeBadge(data.stage);
+                                        if (allFiles.some(o => { const p = typeof o === 'string' ? o : o.path; return p && isInspectable(p); })) {
+                                            addNodeBadge(data.stage);
+                                        }
                                     }
                                 }
-                                // NOTE: Do NOT call refreshPipeline() here.
-                                // dvc repro holds a file lock, so dvc status --json
-                                // would fail and return empty data → all nodes green.
-                                // The final await refreshPipeline() after the stream
-                                // ends will set the correct state.
                                 break;
 
                             case 'done':
@@ -3069,7 +3109,7 @@
                         }
                     }
 
-                    // Final UI update
+                    // Final toast
                     if (pipelineSuccess) {
                         showToast('Pipeline completed ✓', 'success');
                     } else if (pipelineCancelled) {
@@ -3078,93 +3118,13 @@
                         showToast(`Failed: ${failedStage || 'unknown stage'}`, 'error');
                     }
                     setTimeout(hideToast, 4000);
-
-                    // Refresh pipeline data (with delay to let DVC release its lock)
-                    await new Promise(r => setTimeout(r, 1500));
-                    await refreshPipeline();
+                    // Note: state cleanup is handled by pollPipeline detecting is_running → false
 
                 } catch (err) {
                     showToast('Error: ' + err.message, 'error');
                     setTimeout(hideToast, 5000);
-                } finally {
+                    _uiLaunchedRun = false;
                     isRunning = false;
-                    allBtn.classList.remove('running');
-                    allBtn.disabled = false;
-                    stageBtn.classList.remove('running');
-                    stageBtn.disabled = false;
-                    stopBtn.classList.remove('visible');
-                    // Stop any remaining animations
-                    if (cy) cy.nodes().forEach(n => {
-                        if (n.scratch('_animating')) {
-                            n.scratch('_animating', false);
-                            n.stop(true, true);
-                        }
-                    });
-                }
-            }
-
-            async function refreshPipeline(retries = 2) {
-                try {
-                    const res = await fetch('/api/pipeline');
-                    const data = await res.json();
-                    if (data.error) {
-                        // If DVC status failed (lock held), retry after a delay
-                        if (retries > 0) {
-                            await new Promise(r => setTimeout(r, 2000));
-                            return refreshPipeline(retries - 1);
-                        }
-                        return;
-                    }
-
-                    // Check if data looks stale (all locked stages showing needs_rerun)
-                    const allNeedsRerun = data.nodes.every(n => n.state !== 'valid');
-                    if (allNeedsRerun && retries > 0) {
-                        // Likely stale due to lock race — retry
-                        await new Promise(r => setTimeout(r, 2000));
-                        return refreshPipeline(retries - 1);
-                    }
-
-                    // Update node data (colors driven by data mappers in stylesheet)
-                    for (const node of data.nodes) {
-                        const cyNode = cy.getElementById(node.id);
-                        if (cyNode.length) {
-                            // Skip color reset for error stages OR currently animating stages
-                            if (_errorStages.has(node.id) || cyNode.scratch('_animating')) {
-                                cyNode.data({
-                                    state: node.state,
-                                    deps: node.deps,
-                                    outs: node.outs,
-                                    metrics: node.metrics,
-                                    plots: node.plots,
-                                });
-                                continue;
-                            }
-                            const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
-                            cyNode.removeStyle();  // Clear any bypass styles from animations
-                            cyNode.data({
-                                state: node.state,
-                                deps: node.deps,
-                                outs: node.outs,
-                                metrics: node.metrics,
-                                plots: node.plots,
-                                bgColor: sc.bg,
-                                borderColor: sc.border,
-                                textColor: sc.text,
-                                glowColor: sc.glow,
-                            });
-                        }
-                    }
-
-                    // Update stats bar
-                    updateStats(data);
-
-                    // If a stage is selected, refresh its sidebar
-                    if (selectedStage) {
-                        const updatedNode = data.nodes.find(n => n.id === selectedStage);
-                        if (updatedNode) showDetail(updatedNode);
-                    }
-                } catch (err) {
-                    console.error('Failed to refresh pipeline:', err);
                 }
             }
 

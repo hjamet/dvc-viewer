@@ -33,9 +33,6 @@ _project_dir: str = os.environ.get("DVC_VIEWER_PROJECT_DIR", os.getcwd())
 # Resolve the DVC binary path (checks system PATH, project .venv, our venv)
 _dvc_bin = resolve_dvc_bin(_project_dir)
  
-# File watching state
-_last_dvc_yaml_time = 0
-_last_dvc_lock_time = 0
 
 # Track the running dvc repro process so we can stop it
 _running_proc: subprocess.Popen | None = None
@@ -644,78 +641,45 @@ async def run_pipeline_stream(
 
 @app.post("/api/stop")
 async def stop_pipeline():
-    """Stop the running dvc repro process."""
+    """Stop the running dvc repro process.
+
+    Works for both UI-launched runs (via _running_proc) and external runs
+    (by reading the PID from .dvc/tmp/rwlock).
+    """
     global _running_proc
     import signal
 
+    # 1. Try UI-launched process first
     proc = _running_proc
-    if proc is None or proc.poll() is not None:
-        return {"stopped": False, "reason": "No pipeline running"}
-
-    try:
-        # Send SIGTERM to the process group so child processes also get killed
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
+    if proc is not None and proc.poll() is None:
         try:
-            proc.terminate()
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except (ProcessLookupError, OSError):
+            try:
+                proc.terminate()
+            except (ProcessLookupError, OSError):
+                pass
+        return {"stopped": True, "source": "ui"}
+
+    # 2. Try external process via rwlock
+    rwlock_path = Path(_project_dir) / ".dvc" / "tmp" / "rwlock"
+    if rwlock_path.exists():
+        try:
+            lock_data = json.loads(rwlock_path.read_text(encoding="utf-8"))
+            for _path, info in lock_data.get("write", {}).items():
+                if isinstance(info, dict) and "pid" in info:
+                    pid = info["pid"]
+                    try:
+                        os.kill(pid, 0)  # Check alive
+                        os.killpg(os.getpgid(pid), signal.SIGTERM)
+                        return {"stopped": True, "source": "external", "pid": pid}
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
+                    break
+        except (json.JSONDecodeError, OSError):
             pass
 
-    return {"stopped": True}
-
-
-@app.get("/api/watch")
-async def watch_updates(request: Request):
-    """Stream 'reload' events whenever dvc.yaml or dvc.lock changes."""
-    import asyncio
-
-    global _last_dvc_yaml_time, _last_dvc_lock_time
-
-    async def event_generator():
-        global _last_dvc_yaml_time, _last_dvc_lock_time
-
-        project = Path(_project_dir).resolve()
-        yaml_path = project / "dvc.yaml"
-        lock_path = project / "dvc.lock"
-
-        # Initialize mtimes if not set
-        if _last_dvc_yaml_time == 0 and yaml_path.exists():
-            _last_dvc_yaml_time = yaml_path.stat().st_mtime
-        if _last_dvc_lock_time == 0 and lock_path.exists():
-            _last_dvc_lock_time = lock_path.stat().st_mtime
-
-        while True:
-            if await request.is_disconnected():
-                break
-
-            await asyncio.sleep(1.5)
-
-            changed = False
-
-            if yaml_path.exists():
-                mtime = yaml_path.stat().st_mtime
-                if mtime > _last_dvc_yaml_time:
-                    _last_dvc_yaml_time = mtime
-                    changed = True
-
-            if lock_path.exists():
-                mtime = lock_path.stat().st_mtime
-                if mtime > _last_dvc_lock_time:
-                    _last_dvc_lock_time = mtime
-                    changed = True
-
-            if changed:
-                yield f"event: reload\ndata: {json.dumps({'time': _last_dvc_yaml_time})}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return {"stopped": False, "reason": "No pipeline running"}
 
 
 @app.get("/api/file/history")
