@@ -177,8 +177,9 @@ def resolve_dvc_bin(project_dir: str | Path) -> str:
 
 def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
     """Run `dvc status --json` and return parsed output.
-    
-    Returns None if the command could not be executed (DVC not found, timeout, etc.).
+
+    Returns None if the command could not be executed (DVC not found, timeout,
+    or DVC lock held by another process such as a running ``dvc repro``).
     Returns {} if DVC reports no changes.
     """
     dvc_bin = resolve_dvc_bin(project_dir)
@@ -194,26 +195,16 @@ def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
             # dvc status returns non-zero when there are changes, that's fine
             # Only truly fail if there's no output at all
             if result.stdout.strip():
-                parsed = json.loads(result.stdout)
-                print(f"[dvc-viewer] dvc status (rc={result.returncode}): {len(parsed)} stages with changes")
-                return parsed
-            print(f"[dvc-viewer] dvc status failed (rc={result.returncode}), no stdout. stderr: {result.stderr[:200]}")
+                return json.loads(result.stdout)
+            # No stdout → DVC error (e.g. lock held by running dvc repro)
             return None
         output = result.stdout.strip()
         if not output or output == "{}":
-            print("[dvc-viewer] dvc status: no changes detected")
             return {}
-        parsed = json.loads(output)
-        print(f"[dvc-viewer] dvc status (rc=0): {len(parsed)} stages with changes")
-        return parsed
+        return json.loads(output)
     except FileNotFoundError:
-        print("[dvc-viewer] DVC not found")
         return None
-    except subprocess.TimeoutExpired:
-        print("[dvc-viewer] dvc status timed out")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"[dvc-viewer] dvc status JSON decode error: {e}")
+    except (subprocess.TimeoutExpired, json.JSONDecodeError):
         return None
 
 
@@ -231,11 +222,10 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
 
     # 3. Get current status (which stages need re-running)
     status = get_dvc_status(project_dir)
-    
+
     if status is None:
-        # DVC status failed — cannot determine state, mark locked stages as needs_rerun
-        # to be safe (better to show amber than incorrect green)
-        print("[dvc-viewer] Status unavailable, marking all locked stages as needs_rerun")
+        # DVC status failed (e.g. lock held by running dvc repro).
+        # Mark locked stages as needs_rerun — better amber than incorrect green.
         for name, stage in pipeline.stages.items():
             if name in locked_stages:
                 stage.state = "needs_rerun"
@@ -243,9 +233,6 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
                 stage.state = "never_run"
     else:
         stages_needing_rerun = set(status.keys()) if status else set()
-        print(f"[dvc-viewer] Stages needing rerun: {stages_needing_rerun}")
-        print(f"[dvc-viewer] Locked stages: {locked_stages}")
-        print(f"[dvc-viewer] All stages: {set(pipeline.stages.keys())}")
 
         # 4. Assign states
         for name, stage in pipeline.stages.items():
@@ -255,7 +242,6 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
                 stage.state = "needs_rerun"
             else:
                 stage.state = "valid"
-            print(f"[dvc-viewer]   {name}: {stage.state}")
 
     # 5. Build edges: if stage B depends on a file that is stage A's output
     output_to_stage: dict[str, str] = {}

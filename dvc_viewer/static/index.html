@@ -2914,8 +2914,11 @@
                                         if (hasInspectable) addNodeBadge(data.stage);
                                     }
                                 }
-                                // Refresh sidebar to show updated file statuses
-                                refreshPipeline();
+                                // NOTE: Do NOT call refreshPipeline() here.
+                                // dvc repro holds a file lock, so dvc status --json
+                                // would fail and return empty data → all nodes green.
+                                // The final await refreshPipeline() after the stream
+                                // ends will set the correct state.
                                 break;
 
                             case 'done':
