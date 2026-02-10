@@ -14,12 +14,28 @@ if [[ ! -f "$PROJECT_DIR/dvc.yaml" ]]; then
 fi
 
 # Re-install dvc-viewer from source (picks up latest code changes)
-pip install -e /home/lopilo/code/dvc-viewer --quiet 2>/dev/null
+echo "📦 Installing dvc-viewer in editable mode..."
+pip uninstall -y dvc-viewer 2>/dev/null || true
+pip install -e .
+
 
 echo "🧪 DVC Viewer TEST — port $TEST_PORT, project: $PROJECT_DIR"
 echo "🌐 http://localhost:$TEST_PORT"
 echo "   Press Ctrl+C to stop."
 echo ""
 
+
+echo "🔍 Python version: $(python --version)"
+echo "🔍 dvc-viewer location: $(pip show dvc-viewer | grep Location)"
+
+
+# Capture the python executable that has the package installed
+PYTHON_EXEC=$(python -c "import sys; print(sys.executable)")
+echo "🔍 Using Python: $PYTHON_EXEC"
+echo "🔍 dvc-viewer location: $(pip show dvc-viewer | grep Location)"
+
 cd "$PROJECT_DIR"
-dvc-viewer --port "$TEST_PORT"
+echo "📂 Changed directory to: $(pwd)"
+
+# Run using the specific python executable to bypass local .python-version
+"$PYTHON_EXEC" -m dvc_viewer.cli --port "$TEST_PORT"

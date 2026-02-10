@@ -339,6 +339,35 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
                         Edge(source=source_stage, target=name, label=dep)
                     )
 
+    # 6. Propagate needs_rerun transitively through the DAG.
+    #    If stage A needs rerun (or is running), all downstream stages
+    #    that are currently "valid" should also be marked needs_rerun.
+    downstream: dict[str, list[str]] = {}
+    for edge in pipeline.edges:
+        downstream.setdefault(edge.source, []).append(edge.target)
+
+    dirty = {
+        name
+        for name, stage in pipeline.stages.items()
+        if stage.state in ("needs_rerun", "running", "never_run")
+    }
+    visited: set[str] = set()
+    queue = list(dirty)
+    
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        
+        children = downstream.get(current, [])
+        for child in children:
+            child_stage = pipeline.stages.get(child)
+            if child_stage and child_stage.state == "valid":
+                child_stage.state = "needs_rerun"
+            if child not in visited:
+                queue.append(child)
+
     return pipeline
 
 
