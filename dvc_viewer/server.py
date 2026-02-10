@@ -160,40 +160,108 @@ async def file_raw(path: str = Query(..., description="Relative file path")):
     return FileResponse(path=str(target), media_type=mime)
 
 
+def _flatten_yaml(data: dict | list | None, prefix: str = "") -> list[dict]:
+    """Flatten a nested YAML dict into a list of {key, value, type} entries."""
+    result = []
+    if data is None:
+        return result
+    if isinstance(data, dict):
+        for k, v in data.items():
+            full_key = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
+            if isinstance(v, dict):
+                result.extend(_flatten_yaml(v, full_key))
+            elif isinstance(v, list):
+                result.append({"key": full_key, "value": v, "type": "list"})
+            elif isinstance(v, bool):
+                result.append({"key": full_key, "value": v, "type": "bool"})
+            elif isinstance(v, int):
+                result.append({"key": full_key, "value": v, "type": "int"})
+            elif isinstance(v, float):
+                result.append({"key": full_key, "value": v, "type": "float"})
+            elif v is None:
+                result.append({"key": full_key, "value": None, "type": "null"})
+            else:
+                result.append({"key": full_key, "value": str(v), "type": "str"})
+    return result
+
+
+def _apply_params(data: dict, params: dict) -> dict:
+    """Apply dot-notation param updates to a nested dict (in place)."""
+    for dotted_key, new_value in params.items():
+        keys = dotted_key.split(".")
+        target = data
+        for k in keys[:-1]:
+            if isinstance(target, dict) and k in target:
+                target = target[k]
+            else:
+                break  # key path doesn't exist — skip silently
+        else:
+            last = keys[-1]
+            if isinstance(target, dict) and last in target:
+                old = target[last]
+                # Coerce new_value to match the original type
+                if isinstance(old, bool):
+                    if isinstance(new_value, str):
+                        new_value = new_value.lower() in ("true", "1", "yes")
+                    else:
+                        new_value = bool(new_value)
+                elif isinstance(old, int) and not isinstance(old, bool):
+                    try:
+                        new_value = int(new_value)
+                    except (ValueError, TypeError):
+                        pass
+                elif isinstance(old, float):
+                    try:
+                        new_value = float(new_value)
+                    except (ValueError, TypeError):
+                        pass
+                elif old is None:
+                    # Keep None if the string is literally "null" or empty
+                    if isinstance(new_value, str) and new_value.strip().lower() in ("null", "none", ""):
+                        new_value = None
+                target[last] = new_value
+    return data
+
+
 @app.get("/api/hydra-config")
 async def get_hydra_config(path: str = Query(..., description="Relative path to Hydra config YAML")):
-    """Read a Hydra config YAML file and return its content."""
+    """Read a Hydra config YAML and return structured parameters."""
     target = _safe_resolve(path)
     if target is None:
         return JSONResponse(content={"error": "Config file not found"}, status_code=404)
     try:
         content = target.read_text(encoding="utf-8")
-        return JSONResponse(content={"content": content, "path": path})
+        parsed = yaml.safe_load(content) or {}
+        params = _flatten_yaml(parsed) if isinstance(parsed, dict) else []
+        return JSONResponse(content={"params": params, "path": path})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.put("/api/hydra-config")
 async def put_hydra_config(request: Request):
-    """Write updated content to a Hydra config YAML file."""
+    """Apply parameter edits to a Hydra config YAML file.
+
+    Expects JSON body: {"path": "...", "params": {"dot.key": newValue, ...}}
+    """
     body = await request.json()
     path = body.get("path")
-    content = body.get("content")
-    if not path or content is None:
-        return JSONResponse(content={"error": "Missing 'path' or 'content'"}, status_code=400)
+    params = body.get("params")
+    if not path or not isinstance(params, dict):
+        return JSONResponse(content={"error": "Missing 'path' or 'params'"}, status_code=400)
 
     target = _safe_resolve(path)
     if target is None:
         return JSONResponse(content={"error": "Config file not found"}, status_code=404)
 
     try:
-        # Validate YAML syntax before writing
-        yaml.safe_load(content)
-    except yaml.YAMLError as e:
-        return JSONResponse(content={"error": f"Invalid YAML: {e}"}, status_code=422)
-
-    try:
-        target.write_text(content, encoding="utf-8")
+        content = target.read_text(encoding="utf-8")
+        data = yaml.safe_load(content) or {}
+        if not isinstance(data, dict):
+            return JSONResponse(content={"error": "Config is not a YAML mapping"}, status_code=422)
+        _apply_params(data, params)
+        output = yaml.dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
+        target.write_text(output, encoding="utf-8")
         return JSONResponse(content={"success": True, "path": path})
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)

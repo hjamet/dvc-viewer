@@ -1250,7 +1250,7 @@
         }
 
         .accordion.open .accordion-body {
-            max-height: 800px;
+            max-height: 2000px;
         }
 
         .accordion-content {
@@ -1261,7 +1261,7 @@
             font-family: 'JetBrains Mono', monospace;
             font-size: 11px;
             color: var(--text-muted);
-            margin-bottom: 10px;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
             gap: 6px;
@@ -1271,38 +1271,154 @@
             opacity: 0.7;
         }
 
-        .hydra-textarea {
-            width: 100%;
-            min-height: 180px;
-            max-height: 400px;
-            resize: vertical;
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            color: var(--text-secondary);
-            outline: none;
-            tab-size: 2;
-            transition: border-color 0.2s ease;
+        /* Parameter groups */
+        .hydra-group {
+            margin-bottom: 6px;
         }
 
-        .hydra-textarea:focus {
+        .hydra-group-header {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent);
+            padding: 8px 0 4px;
+            border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+            margin-bottom: 4px;
+        }
+
+        /* Parameter rows */
+        .hydra-param {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .hydra-param:last-child {
+            border-bottom: none;
+        }
+
+        .hydra-param-key {
+            flex: 0 0 auto;
+            max-width: 50%;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .hydra-param-input {
+            flex: 1;
+            min-width: 0;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 4px 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            outline: none;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+
+        .hydra-param-input:focus {
             border-color: var(--border-glow);
+            background: rgba(0, 0, 0, 0.4);
             color: var(--text-primary);
         }
 
-        .hydra-textarea.error {
-            border-color: rgba(239, 68, 68, 0.6);
+        .hydra-param-input.modified {
+            border-color: rgba(251, 191, 36, 0.5);
+            background: rgba(251, 191, 36, 0.06);
+        }
+
+        .hydra-param-type {
+            flex: 0 0 auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            padding: 2px 5px;
+            border-radius: 4px;
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--text-muted);
+            letter-spacing: 0.03em;
+        }
+
+        /* Boolean toggle */
+        .hydra-toggle {
+            position: relative;
+            width: 34px;
+            height: 18px;
+            flex: 0 0 34px;
+            cursor: pointer;
+        }
+
+        .hydra-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .hydra-toggle-track {
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 9px;
+            transition: background 0.2s ease;
+        }
+
+        .hydra-toggle input:checked+.hydra-toggle-track {
+            background: rgba(34, 197, 94, 0.5);
+        }
+
+        .hydra-toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s ease;
+        }
+
+        .hydra-toggle input:checked~.hydra-toggle-thumb {
+            transform: translateX(16px);
+        }
+
+        /* list display (read-only) */
+        .hydra-list-value {
+            flex: 1;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            font-style: italic;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* null display */
+        .hydra-null-value {
+            flex: 1;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            opacity: 0.5;
+            font-style: italic;
         }
 
         .hydra-actions {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-top: 10px;
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
             gap: 10px;
         }
 
@@ -1863,17 +1979,16 @@
                     body.appendChild(content);
 
                     let loaded = false;
-                    let originalContent = '';
 
                     header.addEventListener('click', () => {
                         acc.classList.toggle('open');
                         if (!loaded && acc.classList.contains('open')) {
                             loaded = true;
-                            loadHydraConfig(data.hydra_config, content);
+                            loadHydraParams(data.hydra_config, content);
                         }
                     });
 
-                    async function loadHydraConfig(configPath, container) {
+                    async function loadHydraParams(configPath, container) {
                         try {
                             const res = await fetch(`/api/hydra-config?path=${encodeURIComponent(configPath)}`);
                             const result = await res.json();
@@ -1881,26 +1996,118 @@
                                 container.innerHTML = `<div class="hydra-loading" style="color:#ef4444;">❌ ${escapeHtml(result.error)}</div>`;
                                 return;
                             }
-                            originalContent = result.content;
+
+                            const params = result.params || [];
+                            // Store original values for diff
+                            const originals = {};
+                            params.forEach(p => { originals[p.key] = p.value; });
+
                             container.innerHTML = '';
 
+                            // Path header
                             const pathDiv = document.createElement('div');
                             pathDiv.className = 'hydra-config-path';
                             pathDiv.innerHTML = `📁 <span class="path-text">${escapeHtml(configPath)}</span>`;
                             container.appendChild(pathDiv);
 
-                            const textarea = document.createElement('textarea');
-                            textarea.className = 'hydra-textarea';
-                            textarea.value = result.content;
-                            textarea.spellcheck = false;
-                            container.appendChild(textarea);
+                            // Group params by top-level key
+                            const groups = {};
+                            const topLevel = [];
+                            params.forEach(p => {
+                                const dotIdx = p.key.indexOf('.');
+                                if (dotIdx > -1) {
+                                    const group = p.key.substring(0, dotIdx);
+                                    if (!groups[group]) groups[group] = [];
+                                    groups[group].push({ ...p, shortKey: p.key.substring(dotIdx + 1) });
+                                } else {
+                                    topLevel.push({ ...p, shortKey: p.key });
+                                }
+                            });
 
+                            // Input registry for collecting values on save
+                            const inputRegistry = {}; // key -> {getValue()}
+
+                            function renderParam(param, parentEl) {
+                                const row = document.createElement('div');
+                                row.className = 'hydra-param';
+
+                                const keyLabel = document.createElement('span');
+                                keyLabel.className = 'hydra-param-key';
+                                keyLabel.textContent = param.shortKey;
+                                keyLabel.title = param.key;
+                                row.appendChild(keyLabel);
+
+                                if (param.type === 'bool') {
+                                    const toggle = document.createElement('label');
+                                    toggle.className = 'hydra-toggle';
+                                    const cb = document.createElement('input');
+                                    cb.type = 'checkbox';
+                                    cb.checked = !!param.value;
+                                    const track = document.createElement('span');
+                                    track.className = 'hydra-toggle-track';
+                                    const thumb = document.createElement('span');
+                                    thumb.className = 'hydra-toggle-thumb';
+                                    toggle.appendChild(cb);
+                                    toggle.appendChild(track);
+                                    toggle.appendChild(thumb);
+                                    row.appendChild(toggle);
+                                    cb.addEventListener('change', checkChanges);
+                                    inputRegistry[param.key] = { getValue: () => cb.checked, el: cb };
+                                } else if (param.type === 'list') {
+                                    const listSpan = document.createElement('span');
+                                    listSpan.className = 'hydra-list-value';
+                                    listSpan.textContent = JSON.stringify(param.value);
+                                    listSpan.title = 'Lists cannot be edited inline';
+                                    row.appendChild(listSpan);
+                                } else if (param.type === 'null') {
+                                    const nullSpan = document.createElement('span');
+                                    nullSpan.className = 'hydra-null-value';
+                                    nullSpan.textContent = 'null';
+                                    row.appendChild(nullSpan);
+                                } else {
+                                    const input = document.createElement('input');
+                                    input.className = 'hydra-param-input';
+                                    input.type = (param.type === 'int' || param.type === 'float') ? 'number' : 'text';
+                                    if (param.type === 'float') input.step = 'any';
+                                    input.value = param.value ?? '';
+                                    input.addEventListener('input', () => {
+                                        const orig = String(originals[param.key] ?? '');
+                                        input.classList.toggle('modified', input.value !== orig);
+                                        checkChanges();
+                                    });
+                                    row.appendChild(input);
+                                    inputRegistry[param.key] = { getValue: () => input.value, el: input };
+                                }
+
+                                const typeBadge = document.createElement('span');
+                                typeBadge.className = 'hydra-param-type';
+                                typeBadge.textContent = param.type;
+                                row.appendChild(typeBadge);
+
+                                parentEl.appendChild(row);
+                            }
+
+                            // Render top-level params
+                            topLevel.forEach(p => renderParam(p, container));
+
+                            // Render grouped params
+                            for (const [groupName, groupParams] of Object.entries(groups)) {
+                                const groupDiv = document.createElement('div');
+                                groupDiv.className = 'hydra-group';
+                                const groupHeader = document.createElement('div');
+                                groupHeader.className = 'hydra-group-header';
+                                groupHeader.textContent = groupName;
+                                groupDiv.appendChild(groupHeader);
+                                groupParams.forEach(p => renderParam(p, groupDiv));
+                                container.appendChild(groupDiv);
+                            }
+
+                            // Actions bar
                             const actions = document.createElement('div');
                             actions.className = 'hydra-actions';
 
                             const status = document.createElement('span');
                             status.className = 'hydra-status';
-                            status.textContent = '';
 
                             const saveBtn = document.createElement('button');
                             saveBtn.className = 'hydra-save-btn';
@@ -1911,34 +2118,38 @@
                             actions.appendChild(saveBtn);
                             container.appendChild(actions);
 
-                            // Track changes
-                            textarea.addEventListener('input', () => {
-                                const changed = textarea.value !== originalContent;
-                                saveBtn.disabled = !changed;
-                                textarea.classList.remove('error');
-                                if (changed) {
+                            function checkChanges() {
+                                let hasChanges = false;
+                                for (const [key, reg] of Object.entries(inputRegistry)) {
+                                    const current = reg.getValue();
+                                    const orig = originals[key];
+                                    if (String(current) !== String(orig ?? '')) {
+                                        hasChanges = true;
+                                        break;
+                                    }
+                                }
+                                saveBtn.disabled = !hasChanges;
+                                if (hasChanges) {
                                     status.className = 'hydra-status unsaved';
                                     status.textContent = '● Unsaved changes';
                                 } else {
                                     status.className = 'hydra-status';
                                     status.textContent = '';
                                 }
-                            });
+                            }
 
-                            // Tab support in textarea
-                            textarea.addEventListener('keydown', (e) => {
-                                if (e.key === 'Tab') {
-                                    e.preventDefault();
-                                    const start = textarea.selectionStart;
-                                    const end = textarea.selectionEnd;
-                                    textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
-                                    textarea.selectionStart = textarea.selectionEnd = start + 2;
-                                    textarea.dispatchEvent(new Event('input'));
-                                }
-                            });
-
-                            // Save handler
                             saveBtn.addEventListener('click', async () => {
+                                // Collect only changed params
+                                const changedParams = {};
+                                for (const [key, reg] of Object.entries(inputRegistry)) {
+                                    const current = reg.getValue();
+                                    const orig = originals[key];
+                                    if (String(current) !== String(orig ?? '')) {
+                                        changedParams[key] = current;
+                                    }
+                                }
+                                if (Object.keys(changedParams).length === 0) return;
+
                                 saveBtn.disabled = true;
                                 saveBtn.innerHTML = '⏳ Saving…';
                                 status.className = 'hydra-status';
@@ -1948,17 +2159,21 @@
                                     const putRes = await fetch('/api/hydra-config', {
                                         method: 'PUT',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ path: configPath, content: textarea.value }),
+                                        body: JSON.stringify({ path: configPath, params: changedParams }),
                                     });
                                     const putData = await putRes.json();
 
                                     if (putData.success) {
-                                        originalContent = textarea.value;
+                                        // Update originals to the new values
+                                        for (const [key, val] of Object.entries(changedParams)) {
+                                            originals[key] = val;
+                                        }
+                                        // Clear modified highlights
+                                        container.querySelectorAll('.hydra-param-input.modified').forEach(el => el.classList.remove('modified'));
                                         saveBtn.innerHTML = '✅ Saved!';
                                         saveBtn.classList.add('saved');
                                         status.className = 'hydra-status';
                                         status.textContent = '';
-                                        textarea.classList.remove('error');
                                         setTimeout(() => {
                                             saveBtn.innerHTML = '💾 Save';
                                             saveBtn.classList.remove('saved');
@@ -1967,7 +2182,6 @@
                                     } else {
                                         saveBtn.innerHTML = '💾 Save';
                                         saveBtn.disabled = false;
-                                        textarea.classList.add('error');
                                         status.className = 'hydra-status error';
                                         status.textContent = putData.error || 'Save failed';
                                     }
