@@ -14,11 +14,41 @@ echo "  🔍 DVC Viewer — Installer"
 echo "  ─────────────────────────"
 echo ""
 
+# ─── Helper: Check for conflicts ───
+check_conflicts() {
+    echo "  🔍 Validating update…"
+    # Check for git merge markers in relevant files
+    if grep -rE "<<<<<<<|=======|>>>>>>>" "$INSTALL_DIR/dvc_viewer" --include="*.py" --include="*.html" --quiet; then
+        echo ""
+        echo "  ❌ ERROR: Merge conflicts detected in $INSTALL_DIR"
+        echo "     The installation is in a broken state with syntax errors."
+        echo "     Please resolve conflicts manually in $INSTALL_DIR and run the installer again."
+        echo ""
+        exit 1
+    fi
+}
+
 # ─── 1. Clone or update ───
 if [ -d "$INSTALL_DIR" ]; then
     echo "  📦 Updating existing installation…"
     cd "$INSTALL_DIR"
-    git pull --quiet --autostash
+    
+    # Check if dirty
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "  ⚠️  Local changes detected. Attempting to update with autostash…"
+    fi
+
+    # Try to pull. If it fails due to conflicts, our trap/set -e might catch it,
+    # but we also explicitly check for markers afterward.
+    if ! git pull --quiet --autostash; then
+        echo ""
+        echo "  ❌ ERROR: Git pull failed."
+        echo "     This usually happens due to complex merge conflicts."
+        echo "     Please go to $INSTALL_DIR, resolve conflicts, and try again."
+        echo ""
+        exit 1
+    fi
+    check_conflicts
 else
     echo "  📦 Cloning repository…"
     git clone --quiet "$REPO_URL" "$INSTALL_DIR"
