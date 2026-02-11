@@ -18,7 +18,7 @@ echo ""
 if [ -d "$INSTALL_DIR" ]; then
     echo "  📦 Updating existing installation…"
     cd "$INSTALL_DIR"
-    git pull --quiet
+    git pull --quiet --autostash
 else
     echo "  📦 Cloning repository…"
     git clone --quiet "$REPO_URL" "$INSTALL_DIR"
