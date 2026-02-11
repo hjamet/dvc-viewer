@@ -41,7 +41,7 @@ fi
 # ─── 3. Install package ───
 echo "  📥 Installing dependencies…"
 "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install --quiet "$INSTALL_DIR"
+"$INSTALL_DIR/.venv/bin/pip" install --quiet -e "$INSTALL_DIR"
 
 # ─── 4. Symlink binary ───
 mkdir -p "$BIN_DIR"

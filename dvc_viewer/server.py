@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
@@ -42,6 +43,11 @@ except Exception:
 
 # Track the running dvc repro process so we can stop it
 _running_proc: subprocess.Popen | None = None
+
+# TTL cache for pipeline data to avoid running dvc status on every 1s poll
+_pipeline_cache: dict | None = None
+_pipeline_cache_time: float = 0.0
+_PIPELINE_CACHE_TTL: float = 5.0  # seconds
 
 # Serve static files
 _static_dir = Path(__file__).parent / "static"
@@ -74,11 +80,17 @@ async def index():
 
 
 @app.get("/api/pipeline", response_class=JSONResponse)
-async def get_pipeline():
+async def get_pipeline(force_refresh: bool = Query(False, description="Bypass cache")):
     """Return the parsed DVC pipeline as JSON."""
+    global _pipeline_cache, _pipeline_cache_time
+    now = time.monotonic()
+    if not force_refresh and _pipeline_cache and (now - _pipeline_cache_time) < _PIPELINE_CACHE_TTL:
+        return JSONResponse(content=_pipeline_cache)
     try:
         pipeline = build_pipeline(_project_dir)
         data = pipeline_to_dict(pipeline)
+        _pipeline_cache = data
+        _pipeline_cache_time = now
         return JSONResponse(content=data)
     except FileNotFoundError as e:
         return JSONResponse(content={"error": str(e)}, status_code=404)

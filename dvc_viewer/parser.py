@@ -150,6 +150,52 @@ def _extract_hydra_config(cmd: str, project_dir: Path) -> str | None:
     return None
 
 
+def _load_params(project_dir: Path, dvc_data: dict) -> dict:
+    """Load parameters from params.yaml and any vars section in dvc.yaml."""
+    params: dict = {}
+    # 1. Load params.yaml (DVC default parameter file)
+    params_path = project_dir / "params.yaml"
+    if params_path.exists():
+        with open(params_path, "r") as f:
+            loaded = yaml.safe_load(f) or {}
+            params.update(loaded)
+    # 2. Load any vars files or inline dicts declared in dvc.yaml
+    vars_section = dvc_data.get("vars", [])
+    if isinstance(vars_section, list):
+        for var_entry in vars_section:
+            if isinstance(var_entry, str):
+                var_path = project_dir / var_entry
+                if var_path.exists():
+                    with open(var_path, "r") as f:
+                        loaded = yaml.safe_load(f) or {}
+                        params.update(loaded)
+            elif isinstance(var_entry, dict):
+                params.update(var_entry)
+    return params
+
+
+def _resolve_interpolation(value: Any, params: dict) -> Any:
+    """Resolve a ${var.path} reference using the params dict.
+
+    If *value* is a string matching ``${some.key}``, traverse *params*
+    by dot-separated keys and return the actual value (preserving type).
+    Non-matching strings and other types are returned as-is.
+    """
+    if not isinstance(value, str):
+        return value
+    m = re.fullmatch(r"\$\{(.+)\}", value.strip())
+    if not m:
+        return value
+    keys = m.group(1).split(".")
+    result: Any = params
+    for k in keys:
+        if isinstance(result, dict) and k in result:
+            result = result[k]
+        else:
+            return value  # unresolvable → keep raw string
+    return result
+
+
 def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     """Parse dvc.yaml to extract all stage definitions."""
     dvc_yaml_path = Path(project_dir) / "dvc.yaml"
@@ -159,6 +205,9 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     with open(dvc_yaml_path, "r") as f:
         data = yaml.safe_load(f)
 
+    # Load parameters for interpolation (params.yaml + vars)
+    params = _load_params(Path(project_dir), data)
+
     stages_data = data.get("stages", {})
     stages: dict[str, Stage] = {}
 
@@ -167,7 +216,7 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             continue
 
         if "foreach" in definition and "do" in definition:
-            items = definition["foreach"]
+            items = _resolve_interpolation(definition["foreach"], params)
             do_block = definition["do"]
             
             is_frozen = definition.get("frozen", False)
@@ -692,12 +741,25 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
             status = "unknown"     # grey (never_run but file exists)
         return {"path": path, "exists": exists, "status": status}
 
+    # Infrastructure stages to hide from the graph (connect to everything,
+    # cluttering the visualization without adding useful information).
+    _HIDDEN_STAGES = {"dvc-code-analysis"}
+
     nodes = []
     for name, stage in pipeline.stages.items():
+        if name in _HIDDEN_STAGES:
+            continue
+
+        # Filter out .dvc-viewer/hashes/*.hash deps (infrastructure noise)
+        visible_deps = [
+            d for d in stage.deps
+            if not d.startswith(".dvc-viewer/hashes/")
+        ]
+
         node_dict: dict[str, Any] = {
             "id": name,
             "cmd": stage.cmd,
-            "deps": [_file_status(d, stage.state) for d in stage.deps],
+            "deps": [_file_status(d, stage.state) for d in visible_deps],
             "outs": [_file_status(o, stage.state) for o in stage.outs],
             "params": stage.params,
             "metrics": [_file_status(m, stage.state) for m in stage.metrics],
@@ -715,6 +777,8 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
 
     edges = []
     for edge in pipeline.edges:
+        if edge.source in _HIDDEN_STAGES or edge.target in _HIDDEN_STAGES:
+            continue
         edges.append(
             {
                 "source": edge.source,
