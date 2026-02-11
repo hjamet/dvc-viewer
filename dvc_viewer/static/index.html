@@ -2532,10 +2532,8 @@
                             hydra_config_exists: node.hydra_config_exists || false,
                         });
 
-                        // If this node is currently selected in sidebar, refresh the sidebar
-                        if (selectedStage === node.id) {
-                            showDetail(cyNode.data());
-                        }
+                        // Sidebar state badge is updated in-place below (line ~2565)
+                        // to preserve open accordions and scroll position.
 
 
                         // Skip color update for nodes with active animation
