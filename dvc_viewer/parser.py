@@ -127,6 +127,9 @@ def _resolve_params(item: Any) -> list[str]:
 # Regex to extract --config-name or -cn value from a command string
 _RE_CONFIG_NAME = re.compile(r"(?:--config-name|--config_name|-cn)\s+(\S+)")
 
+# Regex to extract PID from DVC lock error message
+_RE_LOCK_PID = re.compile(r"\(PID (\d+)\)")
+
 
 def _extract_hydra_config(cmd: str, project_dir: Path) -> str | None:
     """Extract the Hydra config path from a stage command.
@@ -162,6 +165,15 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     for name, definition in stages_data.items():
         if not isinstance(definition, dict):
             continue
+
+        if "foreach" in definition and "do" in definition:
+            items = definition["foreach"]
+            do_block = definition["do"]
+            
+            expanded_stages = _expand_foreach(name, items, do_block, project_dir)
+            stages.update(expanded_stages)
+            continue
+
         cmd = definition.get("cmd", "")
         stage = Stage(
             name=name,
@@ -175,10 +187,59 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
             frozen=definition.get("frozen", False),
         )
-
         stages[name] = stage
 
     return stages
+
+
+def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str | Path) -> dict[str, Stage]:
+    """Expand a foreach block into multiple individual stages."""
+    expanded: dict[str, Stage] = {}
+    
+    # DVC support list or dict for foreach
+    iterable: list[tuple[Any, Any]] = []
+    if isinstance(items, list):
+        iterable = [(None, item) for item in items]
+    elif isinstance(items, dict):
+        iterable = list(items.items())
+    else:
+        # Fallback for unexpected data types
+        return {}
+
+    for key, item in iterable:
+        # Generate stage name (e.g. stage@item or stage@key)
+        suffix = str(key if key is not None else item)
+        name = f"{base_name}@{suffix}"
+        
+        # Helper for substitution
+        def sub(val: Any) -> Any:
+            if isinstance(val, str):
+                res = val.replace("${item}", str(item))
+                if key is not None:
+                    res = res.replace("${key}", str(key))
+                return res
+            if isinstance(val, list):
+                return [sub(v) for v in val]
+            if isinstance(val, dict):
+                return {sub(k): sub(v) for k, v in val.items()}
+            return val
+
+        cmd = sub(do_block.get("cmd", ""))
+        stage = Stage(
+            name=name,
+            cmd=cmd,
+            deps=_resolve_dep_or_out(sub(do_block.get("deps"))),
+            outs=_resolve_dep_or_out(sub(do_block.get("outs"))),
+            params=_resolve_params(sub(do_block.get("params"))),
+            metrics=_resolve_dep_or_out(sub(do_block.get("metrics"))),
+            plots=_resolve_dep_or_out(sub(do_block.get("plots"))),
+            always_changed=do_block.get("always_changed", False),
+            hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
+            frozen=do_block.get("frozen", False),
+        )
+        expanded[name] = stage
+        
+    return expanded
 
 
 def parse_dvc_lock(project_dir: str | Path) -> set[str]:
@@ -309,34 +370,57 @@ def detect_running_stage(
     Returns (is_running, running_stage_name, pid).
 
     Strategy:
-    1. Use `pgrep` to find a live `dvc repro` process (most reliable).
-    2. If found, read rwlock to identify which specific stage is running.
+    1. Run `dvc status` to check if the repository is locked.
+    2. If locked, extract the PID from the error message.
+    3. Verify candidate PIDs (from status or pgrep) against the project's rwlock.
     """
-    # --- Step 1: Check if any `dvc repro` process is actually running ---
-    live_pid: int | None = None
+    project_dir = Path(project_dir)
+    dvc_bin = resolve_dvc_bin(project_dir)
+    lock_pid: int | None = None
+
+    # --- Step 1: Check dvc status for lock errors ---
     try:
+        # Short timeout: if it doesn't fail quickly with a lock error,
+        # it might be actually calculating status, which is fine.
         result = subprocess.run(
+            [dvc_bin, "status", "--json"],
+            capture_output=True, text=True, cwd=str(project_dir), timeout=10
+        )
+        if result.returncode == 0:
+            # No lock held -> likely not running a repro that blocks us
+            return False, None, None
+        
+        m = _RE_LOCK_PID.search(result.stderr)
+        if m:
+            lock_pid = int(m.group(1))
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    # --- Step 2: Collect candidate PIDs ---
+    candidate_pids: set[int] = set()
+    if lock_pid:
+        candidate_pids.add(lock_pid)
+    
+    try:
+        pgrep_res = subprocess.run(
             ["pgrep", "-f", "dvc repro"],
             capture_output=True, text=True, timeout=5,
         )
-        if result.returncode == 0:
-            for line in result.stdout.strip().splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    candidate_pid = int(line)
-                    # Exclude our own process (in case dvc-viewer itself
-                    # matches the grep pattern)
-                    if candidate_pid != os.getpid():
-                        live_pid = candidate_pid
-                        break
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        if pgrep_res.returncode == 0:
+            for line in pgrep_res.stdout.strip().splitlines():
+                if line.strip().isdigit():
+                    pid = int(line.strip())
+                    if pid != os.getpid():
+                        candidate_pids.add(pid)
+    except (subprocess.TimeoutExpired, OSError):
         pass
 
-    if live_pid is None:
+    if not candidate_pids:
         return False, None, None
 
-    # --- Step 2: Identify which stage is running via rwlock ---
-    rwlock_path = Path(project_dir) / ".dvc" / "tmp" / "rwlock"
+    # --- Step 3: Verify candidate PIDs via rwlock ---
+    rwlock_path = project_dir / ".dvc" / "tmp" / "rwlock"
+    live_pid: int | None = None
     running_stage: str | None = None
 
     if rwlock_path.exists():
@@ -346,55 +430,74 @@ def detect_running_stage(
                 lock_data = json.loads(raw)
                 read_locks: dict = lock_data.get("read", {})
                 write_locks: dict = lock_data.get("write", {})
-                project_path = Path(project_dir).resolve()
+                project_path = project_dir.resolve()
 
-                # Collect write-locked files held by the live PID
-                live_write_files: set[str] = set()
-                for locked_path, info_list in write_locks.items():
-                    entries = info_list if isinstance(info_list, list) else [info_list]
-                    for entry in entries:
-                        if isinstance(entry, dict) and entry.get("pid") == live_pid:
-                            try:
-                                rel = str(Path(locked_path).resolve().relative_to(project_path))
-                            except ValueError:
-                                rel = locked_path
-                            live_write_files.add(rel)
+                # Find which candidate PID is actually mentioned in our rwlock
+                for pid in candidate_pids:
+                    if not _is_dvc_process_alive(pid):
+                        continue
+                    
+                    # Check write locks for this PID
+                    live_write_files: set[str] = set()
+                    for locked_path, info_list in write_locks.items():
+                        entries = info_list if isinstance(info_list, list) else [info_list]
+                        for entry in entries:
+                            if isinstance(entry, dict) and entry.get("pid") == pid:
+                                try:
+                                    rel = str(Path(locked_path).resolve().relative_to(project_path))
+                                except ValueError:
+                                    rel = locked_path
+                                live_write_files.add(rel)
 
-                # Collect read-locked files held by the live PID
-                live_read_files: set[str] = set()
-                for locked_path, info_list in read_locks.items():
-                    entries = info_list if isinstance(info_list, list) else [info_list]
-                    for entry in entries:
-                        if isinstance(entry, dict) and entry.get("pid") == live_pid:
-                            try:
-                                rel = str(Path(locked_path).resolve().relative_to(project_path))
-                            except ValueError:
-                                rel = locked_path
-                            live_read_files.add(rel)
+                    # Check read locks for this PID
+                    live_read_files: set[str] = set()
+                    for locked_path, info_list in read_locks.items():
+                        entries = info_list if isinstance(info_list, list) else [info_list]
+                        for entry in entries:
+                            if isinstance(entry, dict) and entry.get("pid") == pid:
+                                try:
+                                    rel = str(Path(locked_path).resolve().relative_to(project_path))
+                                except ValueError:
+                                    rel = locked_path
+                                live_read_files.add(rel)
 
-                # Match write-locked files to stage outputs (most precise)
-                if live_write_files:
-                    for name, stage in stages.items():
-                        stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
-                        if stage_outputs & live_write_files:
-                            running_stage = name
+                    if live_write_files or live_read_files:
+                        live_pid = pid
+                        
+                        # Match write-locked files to stage outputs (most precise)
+                        if live_write_files:
+                            for name, stage in stages.items():
+                                stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
+                                if stage_outputs & live_write_files:
+                                    running_stage = name
+                                    break
+
+                        # Fallback: match read-locked files to stage deps
+                        if running_stage is None and live_read_files:
+                            best_match: str | None = None
+                            best_count = 0
+                            for name, stage in stages.items():
+                                stage_deps = set(stage.deps)
+                                overlap = stage_deps & live_read_files
+                                if len(overlap) > best_count:
+                                    best_count = len(overlap)
+                                    best_match = name
+                            running_stage = best_match
+                        
+                        if live_pid:
                             break
-
-                # Fallback: match read-locked files to stage deps
-                if running_stage is None and live_read_files:
-                    best_match: str | None = None
-                    best_count = 0
-                    for name, stage in stages.items():
-                        stage_deps = set(stage.deps)
-                        overlap = stage_deps & live_read_files
-                        if len(overlap) > best_count:
-                            best_count = len(overlap)
-                            best_match = name
-                    running_stage = best_match
         except (json.JSONDecodeError, OSError):
             pass
 
-    return True, running_stage, live_pid
+    # If we didn't find anything in rwlock but dvc status said we're locked,
+    # it's a strong signal even if we can't identify the specific stage yet.
+    if live_pid is None and lock_pid and _is_dvc_process_alive(lock_pid):
+        live_pid = lock_pid
+
+    if live_pid:
+        return True, running_stage, live_pid
+
+    return False, None, None
 
 
 def build_pipeline(project_dir: str | Path) -> Pipeline:
@@ -497,12 +600,22 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
 
     for name, stage in stages.items():
         for dep in stage.deps:
+            # 1. Exact match
             if dep in output_to_stage:
                 source_stage = output_to_stage[dep]
                 if source_stage != name:
                     pipeline.edges.append(
                         Edge(source=source_stage, target=name, label=dep)
                     )
+            # 2. Match directory outputs (if dep is file inside an out dir)
+            else:
+                for out, source_stage in output_to_stage.items():
+                    if dep.startswith(out.rstrip("/") + "/"):
+                        if source_stage != name:
+                            pipeline.edges.append(
+                                Edge(source=source_stage, target=name, label=dep)
+                            )
+                        break
 
     # 6. Propagate needs_rerun transitively through the DAG.
     #    If stage A needs rerun (or is running), all downstream stages

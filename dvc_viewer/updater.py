@@ -41,6 +41,19 @@ def _find_project_python(project_dir: Path) -> str:
     return shutil.which("python3") or shutil.which("python") or "python3"
 
 
+def _find_script_in_cmd(cmd: str, project_dir: Path) -> Path | None:
+    """Extract script path from cmd (simplistic approach: first .py file)."""
+    if not cmd:
+        return None
+    for part in cmd.split():
+        if part.endswith(".py"):
+            part = part.strip("'\"")
+            p = project_dir / part
+            if p.exists():
+                return p
+    return None
+
+
 def update_dvc_yaml(project_dir: Path) -> None:
     """
     Main logic:
@@ -96,19 +109,69 @@ def update_dvc_yaml(project_dir: Path) -> None:
             modified = True
 
     # 2. Process other stages
-    for name, stage in stages.items():
+    for name, stage in list(stages.items()):
         if name == hasher_stage_name:
             continue
             
+        # Handle foreach
+        if "foreach" in stage and "do" in stage:
+            items = stage["foreach"]
+            do_block = stage["do"]
+            
+            # We want to inject the dependency into the do_block
+            # so that ALL expanded stages depend on their respective hash
+            # DVC documentation says we can use ${item} in do_block.deps
+            
+            # But first, we need to know what to hash.
+            # Usually it's the script in the 'cmd'.
+            cmd = do_block.get("cmd", "")
+            script_path = _find_script_in_cmd(cmd, project_dir)
+            
+            if script_path:
+                # Compute hash (transitive)
+                deps = find_transitive_dependencies(script_path, project_dir)
+                code_hash = compute_aggregate_hash(deps, project_dir)
+                
+                # Now we need to decide how to name the hash files.
+                # If we use stage@${item}.hash, DVC will expand it.
+                # But we need to write these files during the 'dvc-viewer hash' run.
+                # 'dvc-viewer hash' (which calls this function) runs BEFORE the stages.
+                
+                # If we are here, we are scanning the dvc.yaml.
+                # We should expand the items to write the hash files.
+                
+                iterable = []
+                if isinstance(items, list):
+                    iterable = [(None, item) for item in items]
+                elif isinstance(items, dict):
+                    iterable = list(items.items())
+                
+                for key, item in iterable:
+                    suffix = str(key if key is not None else item)
+                    expanded_name = f"{name}@{suffix}"
+                    
+                    hash_file_name = f"{expanded_name}.hash"
+                    hash_file_path = hash_dir / hash_file_name
+                    
+                    # Update hash file
+                    hash_file_path.write_text(code_hash)
+                
+                # Use ${key} for dicts and ${item} for lists to match DVC's stage naming suffix
+                var_name = "key" if isinstance(items, dict) else "item"
+                hash_dep = f".dvc-viewer/hashes/{name}@${{{var_name}}}.hash"
+                
+                current_deps = do_block.get("deps", [])
+                if current_deps is None: current_deps = []
+                
+                if not any((isinstance(d, str) and ".dvc-viewer/hashes/" in d) or (isinstance(d, dict) and any(".dvc-viewer/hashes/" in k for k in d)) for d in current_deps):
+                    print(f"   🔗 Adding dependency to '{name}' (foreach): {hash_dep}")
+                    current_deps.append(hash_dep)
+                    do_block["deps"] = current_deps
+                    modified = True
+            continue
+
         cmd = stage.get("cmd", "")
-        # Extract script path from cmd (simplistic approach: first .py file)
-        script_path = None
-        for part in cmd.split():
-            if part.endswith(".py"):
-                p = project_dir / part
-                if p.exists():
-                    script_path = p
-                    break
+        script_path = _find_script_in_cmd(cmd, project_dir)
         
         if not script_path:
             continue
@@ -125,7 +188,6 @@ def update_dvc_yaml(project_dir: Path) -> None:
         old_hash = hash_file_path.read_text().strip() if hash_file_path.exists() else None
         if old_hash != code_hash:
             hash_file_path.write_text(code_hash)
-            # print(f"   🔄 Updated hash for '{name}'")
         
         # Ensure dependency exists in dvc.yaml
         hash_dep = f".dvc-viewer/hashes/{hash_file_name}"
@@ -136,7 +198,6 @@ def update_dvc_yaml(project_dir: Path) -> None:
             current_deps = []
             
         # Check if hash_dep is already present
-        # DVC deps can be strings or dicts
         has_dep = False
         for dep in current_deps:
             if isinstance(dep, str) and dep == hash_dep:
@@ -171,9 +232,6 @@ def update_dvc_yaml(project_dir: Path) -> None:
                     print(f"      {line}")
         except subprocess.CalledProcessError as e:
             print(f"   ⚠️ post_hash hook failed (non-blocking): {e}")
-            if e.stderr:
-                for line in e.stderr.strip().splitlines():
-                    print(f"      {line}")
 
     if modified:
         print("   💾 Updating dvc.yaml...")
@@ -181,4 +239,6 @@ def update_dvc_yaml(project_dir: Path) -> None:
             yaml.dump(config, f, sort_keys=False, default_flow_style=None)
     else:
         print("   ✅ dvc.yaml is up to date")
+
+
 
