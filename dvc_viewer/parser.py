@@ -430,6 +430,30 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
             else:
                 stage.state = "valid"
 
+    # Post-validation: Override "valid" to "needs_rerun" if any required file
+    # (dep or out) is missing from disk. DVC status only checks changes,
+    # not existence.
+    for name, stage in pipeline.stages.items():
+        if stage.state != "valid":
+            continue
+        # Check deps, outs, metrics, plots, and hydra_config
+        all_files = stage.deps + stage.outs + stage.metrics + stage.plots
+        if stage.hydra_config:
+            all_files.append(stage.hydra_config)
+            
+        if name == 'train_mixer':
+            print(f"[DEBUG] train_mixer all_files: {all_files}")
+        for f in all_files:
+            if ":" in f: continue  # Skip params like 'params.yaml:lr'
+            full_path = project_dir / f
+            exists = full_path.exists()
+            if name == 'train_mixer':
+                print(f"[DEBUG] Checking '{f}' -> exists={exists} (full_path={full_path})")
+            if not exists:
+                print(f"[DEBUG] Stage '{name}' marked needs_rerun because '{f}' is missing.")
+                stage.state = "needs_rerun"
+                break
+
     # 5. Build edges: if stage B depends on a file that is stage A's output
     output_to_stage: dict[str, str] = {}
     for name, stage in stages.items():
