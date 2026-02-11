@@ -1690,6 +1690,8 @@
             };
 
             let cy = null;
+            let selectedStage = null;
+
 
             // ─── Fetch pipeline data ───
             async function fetchPipeline() {
@@ -1763,7 +1765,7 @@
                         {
                             selector: 'node',
                             style: {
-                                'label': (ele) => (ele.data('frozen') ? '❄️ ' : '') + ele.data('label'),
+                                'label': (ele) => ele.data('label'),
                                 'width': 'label',
 
                                 'height': 40,
@@ -1782,6 +1784,15 @@
                                 'transition-property': 'border-width, border-color, background-color',
                                 'transition-duration': '0.15s',
                             },
+                        },
+                        {
+                            selector: 'node[?frozen]',
+                            style: {
+                                'background-color': '#eff6ff', // blue-50
+                                'border-color': '#3b82f6', // blue-500
+                                'color': '#1d4ed8', // blue-700
+                                'label': (ele) => '❄️ ' + ele.data('label'),
+                            }
                         },
                         {
                             selector: 'node:active, node:selected',
@@ -2308,15 +2319,41 @@
                 const btnFreeze = document.getElementById('btn-freeze-stage');
                 const isFrozen = data.frozen;
                 btnFreeze.querySelector('.freeze-text').textContent = isFrozen ? 'Unfreeze' : 'Freeze';
-                btnFreeze.style.background = isFrozen ? 'rgba(96, 165, 250, 0.25)' : 'rgba(96, 165, 250, 0.1)';
+
+                // Check if any ancestor is frozen
+                let ancestorFrozen = false;
+                if (cy) {
+                    const node = cy.getElementById(data.id);
+                    if (node.length) {
+                        const ancestors = node.predecessors('node');
+                        ancestorFrozen = ancestors.some(n => n.data('frozen'));
+                    }
+                }
+
+                if (isFrozen && ancestorFrozen) {
+                    btnFreeze.disabled = true;
+                    btnFreeze.title = "Cannot unfreeze: parent stage is frozen";
+                    btnFreeze.style.opacity = "0.5";
+                    btnFreeze.style.background = 'rgba(96, 165, 250, 0.25)';
+                    btnFreeze.style.cursor = 'not-allowed';
+                } else {
+                    btnFreeze.disabled = false;
+                    btnFreeze.title = isFrozen ? "Unfreeze this stage and descendants" : "Freeze this stage and descendants";
+                    btnFreeze.style.opacity = "1";
+                    btnFreeze.style.background = isFrozen ? 'rgba(96, 165, 250, 0.25)' : 'rgba(96, 165, 250, 0.1)';
+                    btnFreeze.style.cursor = 'pointer';
+                }
 
                 // Remove old listeners to avoid duplicates (naive approach)
                 const newBtn = btnFreeze.cloneNode(true);
                 btnFreeze.parentNode.replaceChild(newBtn, btnFreeze);
 
                 newBtn.addEventListener('click', async () => {
+                    if (newBtn.disabled) return;
                     newBtn.disabled = true;
+                    const originalText = newBtn.querySelector('.freeze-text').textContent;
                     newBtn.querySelector('.freeze-text').textContent = 'Updating...';
+
                     try {
                         const res = await fetch('/api/stage/freeze', {
                             method: 'POST',
@@ -2324,22 +2361,35 @@
                             body: JSON.stringify({ stage: data.id, frozen: !isFrozen }),
                         });
                         const resData = await res.json();
+
                         if (resData.error) {
                             alert('Error: ' + resData.error);
+                            // Revert text on error
+                            newBtn.querySelector('.freeze-text').textContent = originalText;
                         } else {
-                            // Reload pipeline to reflect changes
-                            // The pollPipeline loop will pick it up, but we can force it or just wait
+                            // Success - we expect pollPipeline to refresh everything eventually
+                            // But let's show success state immediately or just re-enable
                             showToast(`Stage ${data.id} ${!isFrozen ? 'frozen' : 'unfrozen'}`, 'success');
-                            // Force immediate update?
+
+                            // Immediately force a poll to update UI
                             pollPipeline();
                         }
                     } catch (err) {
                         alert('Network error: ' + err);
+                        newBtn.querySelector('.freeze-text').textContent = originalText;
                     } finally {
                         newBtn.disabled = false;
-                        // Text will update on next poll/render
+                        // We rely on polling to update the button text to the new state
+                        // If polling is slow, user sees "Updating..." which is fine, but if it fails silently...
+                        // Let's reset to "processed" state locally for better UX?
+                        if (!newBtn.disabled) {
+                            // If we are here, fetch completed.
+                            // If success, the state should flip.
+                            // But since we rely on `showDetail` re-rendering with new data...
+                        }
                     }
                 });
+
             }
 
 
@@ -2477,7 +2527,16 @@
                             outs: node.outs,
                             metrics: node.metrics,
                             plots: node.plots,
+                            frozen: node.frozen || false,
+                            hydra_config: node.hydra_config || null,
+                            hydra_config_exists: node.hydra_config_exists || false,
                         });
+
+                        // If this node is currently selected in sidebar, refresh the sidebar
+                        if (selectedStage === node.id) {
+                            showDetail(cyNode.data());
+                        }
+
 
                         // Skip color update for nodes with active animation
                         if (cyNode.scratch('_animating')) {
@@ -2897,7 +2956,7 @@
             });
 
             // ─── Run Pipeline / Stage ───
-            let selectedStage = null;
+            // selectedStage is declared at top level
             let isRunning = false;
             let stageLogs = {};  // {stageId: 'log lines...'}
             let _errorStages = new Set();  // stages that failed — keep red until next run

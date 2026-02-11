@@ -3,31 +3,23 @@
 
 set -euo pipefail
 
-# Create a temporary directory for the test project
-TEST_DIR=$(mktemp -d -t dvc-viewer-test-XXXXXX)
-echo "🧪 Creating test project in: $TEST_DIR"
+# Create or use a fixed test directory
+TEST_DIR="$HOME/dvc-viewer-test-project"
+echo "🧪 Using test project in: $TEST_DIR"
 
-# Clean up on exit
-cleanup() {
-    echo ""
-    echo "🧹 Cleaning up..."
-    # rm -rf "$TEST_DIR" # Optional: keep it for inspection if needed
-    echo "Done."
-}
-trap cleanup EXIT
+# Check if dvc.yaml exists, if not initialize
+if [ ! -f "$TEST_DIR/dvc.yaml" ]; then
+    echo "⚡ Initializing new test project..."
+    mkdir -p "$TEST_DIR"
+    cd "$TEST_DIR"
+    
+    # Initialize git and dvc
+    git init -q
+    dvc init -q
+    git commit -m "Initialize DVC" --allow-empty
 
-# Initialize git and dvc
-cd "$TEST_DIR"
-git init -q
-dvc init -q
-git commit -m "Initialize DVC" --allow-empty
-
-# Create a dummy dvc.yaml with a multi-stage dependency graph
-# Graph:
-#   prepare -> train -> evaluate
-#           -> process
-#   standalone
-cat > dvc.yaml <<EOF
+    # Create a dummy dvc.yaml
+    cat > dvc.yaml <<EOF
 stages:
   prepare:
     cmd: echo "Preparing data..." > data.txt
@@ -64,14 +56,17 @@ stages:
     cmd: echo "Standalone stage"
 EOF
 
-# Create dummy script files so DVC doesn't complain (though cmd is just echo)
-touch data.txt processed.txt model.pkl metrics.json scores.json
+    # Create dummy script files
+    touch data.txt processed.txt model.pkl metrics.json scores.json
 
-# Commit dvc.yaml
-git add .
-git commit -m "Add pipeline"
+    # Commit
+    git add .
+    git commit -m "Add pipeline"
+    echo "✅ Project initialized."
+else
+    echo "✅ Found existing project."
+fi
 
-echo "✅ Test project created."
 echo "graph:"
 echo "  prepare -> (process, train)"
 echo "  process -> (evaluate)"
