@@ -64,6 +64,8 @@ class Stage:
     state: str = "never_run"  # valid | needs_rerun | never_run | running
     always_changed: bool = False
     hydra_config: str | None = None  # resolved relative path to config YAML
+    frozen: bool = False
+
 
 
 @dataclass
@@ -171,7 +173,9 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             plots=_resolve_dep_or_out(definition.get("plots")),
             always_changed=definition.get("always_changed", False),
             hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
+            frozen=definition.get("frozen", False),
         )
+
         stages[name] = stage
 
     return stages
@@ -585,7 +589,9 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
             "metrics": [_file_status(m, stage.state) for m in stage.metrics],
             "plots": [_file_status(p, stage.state) for p in stage.plots],
             "state": stage.state,
+            "frozen": stage.frozen,
         }
+
         if stage.hydra_config:
             node_dict["hydra_config"] = stage.hydra_config
             node_dict["hydra_config_exists"] = (

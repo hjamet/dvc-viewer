@@ -1,41 +1,93 @@
 #!/usr/bin/env bash
-# Quick-launch dvc-viewer in dev/test mode on a different port.
-# Usage: ./dvc-viewer-test.sh [PROJECT_DIR]
-#   PROJECT_DIR defaults to ~/code/trail-rag
+# Launch dvc-viewer with a temporary local DVC project for testing.
 
 set -euo pipefail
 
-PROJECT_DIR="${1:-$HOME/code/trail-rag}"
-TEST_PORT=8687
+# Create a temporary directory for the test project
+TEST_DIR=$(mktemp -d -t dvc-viewer-test-XXXXXX)
+echo "🧪 Creating test project in: $TEST_DIR"
 
-if [[ ! -f "$PROJECT_DIR/dvc.yaml" ]]; then
-    echo "❌ No dvc.yaml in $PROJECT_DIR" >&2
-    exit 1
-fi
+# Clean up on exit
+cleanup() {
+    echo ""
+    echo "🧹 Cleaning up..."
+    # rm -rf "$TEST_DIR" # Optional: keep it for inspection if needed
+    echo "Done."
+}
+trap cleanup EXIT
 
-# Re-install dvc-viewer from source (picks up latest code changes)
-echo "📦 Installing dvc-viewer in editable mode..."
-pip uninstall -y dvc-viewer 2>/dev/null || true
-pip install -e .
+# Initialize git and dvc
+cd "$TEST_DIR"
+git init -q
+dvc init -q
+git commit -m "Initialize DVC" --allow-empty
 
+# Create a dummy dvc.yaml with a multi-stage dependency graph
+# Graph:
+#   prepare -> train -> evaluate
+#           -> process
+#   standalone
+cat > dvc.yaml <<EOF
+stages:
+  prepare:
+    cmd: echo "Preparing data..." > data.txt
+    outs:
+      - data.txt
+  
+  process:
+    cmd: cat data.txt > processed.txt
+    deps:
+      - data.txt
+    outs:
+      - processed.txt
 
-echo "🧪 DVC Viewer TEST — port $TEST_PORT, project: $PROJECT_DIR"
-echo "🌐 http://localhost:$TEST_PORT"
-echo "   Press Ctrl+C to stop."
+  train:
+    cmd: echo "Training model..." > model.pkl
+    deps:
+      - data.txt
+    outs:
+      - model.pkl
+    metrics:
+      - metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: echo "Evaluating..." > scores.json
+    deps:
+      - model.pkl
+      - processed.txt
+    metrics:
+      - scores.json:
+          cache: false
+
+  standalone:
+    cmd: echo "Standalone stage"
+EOF
+
+# Create dummy script files so DVC doesn't complain (though cmd is just echo)
+touch data.txt processed.txt model.pkl metrics.json scores.json
+
+# Commit dvc.yaml
+git add .
+git commit -m "Add pipeline"
+
+echo "✅ Test project created."
+echo "graph:"
+echo "  prepare -> (process, train)"
+echo "  process -> (evaluate)"
+echo "  train -> (evaluate)"
+echo "  standalone"
 echo ""
 
+# Re-install dvc-viewer from source
+echo "📦 Installing dvc-viewer in editable mode..."
+cd "$HOME/code/dvc-viewer"
+pip install -e . >/dev/null 2>&1
 
-echo "🔍 Python version: $(python --version)"
-echo "🔍 dvc-viewer location: $(pip show dvc-viewer | grep Location)"
+echo "🚀 Starting dvc-viewer on port 8687..."
+echo "🌐 http://localhost:8687"
+echo "   Press Ctrl+C to stop."
 
-
-# Capture the python executable that has the package installed
-PYTHON_EXEC=$(python -c "import sys; print(sys.executable)")
-echo "🔍 Using Python: $PYTHON_EXEC"
-echo "🔍 dvc-viewer location: $(pip show dvc-viewer | grep Location)"
-
-cd "$PROJECT_DIR"
-echo "📂 Changed directory to: $(pwd)"
-
-# Run using the specific python executable to bypass local .python-version
-"$PYTHON_EXEC" -m dvc_viewer.cli --port "$TEST_PORT"
+# Run server
+cd "$TEST_DIR"
+python -m dvc_viewer.cli --port 8687

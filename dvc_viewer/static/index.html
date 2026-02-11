@@ -1623,6 +1623,12 @@
                     <span class="run-spinner"></span>
                     Run Stage
                 </button>
+                <button class="run-btn run-btn-sidebar" id="btn-freeze-stage" title="Freeze/Unfreeze this stage"
+                    style="margin-top: 8px; border-color: #60a5fa; background: rgba(96, 165, 250, 0.1);">
+                    <span class="freeze-icon">❄️</span>
+                    <span class="freeze-text">Freeze</span>
+                </button>
+
                 <div id="sidebar-logs-container"></div>
             </div>
         </aside>
@@ -1712,7 +1718,9 @@
                             plots: node.plots || [],
                             hydra_config: node.hydra_config || null,
                             hydra_config_exists: node.hydra_config_exists || false,
+                            frozen: node.frozen || false,
                             bgColor: sc.bg,
+
                             borderColor: sc.border,
                             textColor: sc.text,
                             glowColor: sc.glow,
@@ -1755,8 +1763,9 @@
                         {
                             selector: 'node',
                             style: {
-                                'label': 'data(label)',
+                                'label': (ele) => (ele.data('frozen') ? '❄️ ' : '') + ele.data('label'),
                                 'width': 'label',
+
                                 'height': 40,
                                 'padding': '16px',
                                 'shape': 'roundrectangle',
@@ -2294,7 +2303,45 @@
                 const logsContainer = document.getElementById('sidebar-logs-container');
                 logsContainer.innerHTML = '';
                 logsContainer.appendChild(logsDiv);
+
+                // Setup Freeze Button
+                const btnFreeze = document.getElementById('btn-freeze-stage');
+                const isFrozen = data.frozen;
+                btnFreeze.querySelector('.freeze-text').textContent = isFrozen ? 'Unfreeze' : 'Freeze';
+                btnFreeze.style.background = isFrozen ? 'rgba(96, 165, 250, 0.25)' : 'rgba(96, 165, 250, 0.1)';
+
+                // Remove old listeners to avoid duplicates (naive approach)
+                const newBtn = btnFreeze.cloneNode(true);
+                btnFreeze.parentNode.replaceChild(newBtn, btnFreeze);
+
+                newBtn.addEventListener('click', async () => {
+                    newBtn.disabled = true;
+                    newBtn.querySelector('.freeze-text').textContent = 'Updating...';
+                    try {
+                        const res = await fetch('/api/stage/freeze', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ stage: data.id, frozen: !isFrozen }),
+                        });
+                        const resData = await res.json();
+                        if (resData.error) {
+                            alert('Error: ' + resData.error);
+                        } else {
+                            // Reload pipeline to reflect changes
+                            // The pollPipeline loop will pick it up, but we can force it or just wait
+                            showToast(`Stage ${data.id} ${!isFrozen ? 'frozen' : 'unfrozen'}`, 'success');
+                            // Force immediate update?
+                            pollPipeline();
+                        }
+                    } catch (err) {
+                        alert('Network error: ' + err);
+                    } finally {
+                        newBtn.disabled = false;
+                        // Text will update on next poll/render
+                    }
+                });
             }
+
 
             function clearDetail() {
                 document.getElementById('sidebar-empty').style.display = 'flex';

@@ -458,6 +458,80 @@ async def put_hydra_config(request: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+@app.post("/api/stage/freeze")
+async def freeze_stage(request: Request):
+    """Freeze or unfreeze a stage and all its descendants."""
+    body = await request.json()
+    stage_name = body.get("stage")
+    frozen = body.get("frozen")
+
+    if not stage_name or frozen is None:
+        return JSONResponse(content={"error": "Missing 'stage' or 'frozen'"}, status_code=400)
+
+    # 1. Build pipeline to get dependencies
+    try:
+        pipeline = build_pipeline(_project_dir)
+    except Exception as e:
+        return JSONResponse(content={"error": f"Failed to parse pipeline: {e}"}, status_code=500)
+
+    if stage_name not in pipeline.stages:
+        return JSONResponse(content={"error": f"Stage '{stage_name}' not found"}, status_code=404)
+
+    # 2. Find descendants
+    # Build adjacency list: source -> [targets]
+    adjacency = {}
+    for edge in pipeline.edges:
+        adjacency.setdefault(edge.source, []).append(edge.target)
+
+    descendants = set()
+    queue = [stage_name]
+    while queue:
+        current = queue.pop(0)
+        # Add to descendants set (including the target stage itself)
+        descendants.add(current)
+        
+        for child in adjacency.get(current, []):
+            if child not in descendants and child not in queue:
+                queue.append(child)
+    
+    # 3. Update dvc.yaml
+    dvc_yaml_path = Path(_project_dir) / "dvc.yaml"
+    if not dvc_yaml_path.exists():
+        return JSONResponse(content={"error": "dvc.yaml not found"}, status_code=404)
+
+    try:
+        # Use a round-trip loader if available? No, sticking to PyYAML as per existing code.
+        with open(dvc_yaml_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+            
+        stages_data = data.get("stages", {})
+        count = 0
+        
+        for name in descendants:
+            if name in stages_data:
+                # Modifying the dict in place
+                if frozen:
+                    stages_data[name]["frozen"] = True
+                else:
+                    # Remove the key if false to keep file clean
+                    stages_data[name].pop("frozen", None)
+                count += 1
+        
+        data["stages"] = stages_data
+        
+        with open(dvc_yaml_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, sort_keys=False, default_flow_style=False, allow_unicode=True)
+
+        return JSONResponse(content={
+            "success": True, 
+            "stages_affected": list(descendants),
+            "frozen": frozen
+        })
+
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.post("/api/run")
 async def run_pipeline(request: Request):
     """Run a single stage or the entire pipeline via `dvc repro`."""
