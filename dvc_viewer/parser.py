@@ -434,7 +434,9 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
                 if name == running_stage:
                     stage.state = "running"
                 elif name in locked_stages:
-                    stage.state = "valid"
+                    # Conservative fallback: if we don't know the status,
+                    # assume needs_rerun until proven otherwise.
+                    stage.state = "needs_rerun"
                 else:
                     stage.state = "never_run"
         else:
@@ -527,7 +529,8 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
     dirty = {
         name
         for name, stage in pipeline.stages.items()
-        if stage.state in ("needs_rerun", "never_run") and not stage.always_changed
+        if (stage.state in ("needs_rerun", "never_run", "failed", "running"))
+        and not stage.always_changed
     }
     # Note: "running" state propagation is handled above more aggressively
     
