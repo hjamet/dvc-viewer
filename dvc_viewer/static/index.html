@@ -1772,11 +1772,6 @@
                                 'text-wrap': 'none',
                                 'transition-property': 'border-width, border-color, background-color',
                                 'transition-duration': '0.15s',
-                                'shadow-blur': 20,
-                                'shadow-color': 'data(glowColor)',
-                                'shadow-opacity': 0.6,
-                                'shadow-offset-x': 0,
-                                'shadow-offset-y': 4,
                             },
                         },
                         {
@@ -1784,8 +1779,6 @@
                             style: {
                                 'border-width': 3,
                                 'border-color': '#6366f1',
-                                'shadow-color': 'rgba(99, 102, 241, 0.6)',
-                                'shadow-blur': 30,
                                 'overlay-opacity': 0,
                             },
                         },
@@ -2382,10 +2375,16 @@
 
                     // Stage changed during run
                     if (nowRunning && nowStage !== _prevRunningStage) {
+                        console.log('[POLL] Stage transition:', _prevRunningStage, '->', nowStage);
                         // Stop animation on previous stage
                         if (_prevRunningStage) {
                             stopSingleNodeAnimation(_prevRunningStage, true);
                         }
+                        if (cy) cy.nodes().forEach(n => {
+                            if (n.id() !== nowStage && n.scratch('_animating')) {
+                                stopSingleNodeAnimation(n.id());
+                            }
+                        });
                         // Start animation on new stage
                         if (nowStage) {
                             startSingleNodeAnimation(nowStage);
@@ -2403,9 +2402,7 @@
                         // Stop all animations
                         if (cy) cy.nodes().forEach(n => {
                             if (n.scratch('_animating')) {
-                                n.scratch('_animating', false);
-                                n.stop(true, true);
-                                n.removeStyle();
+                                stopSingleNodeAnimation(n.id());
                             }
                         });
                         if (!_uiLaunchedRun) {
@@ -2455,10 +2452,17 @@
 
                     updateStats(data);
 
-                    // Refresh sidebar if a stage is selected
+                    // Update sidebar metadata in-place (without rebuilding DOM)
+                    // This preserves open accordions (Hydra config) and scroll position
                     if (selectedStage) {
                         const updatedNode = data.nodes.find(n => n.id === selectedStage);
-                        if (updatedNode) showDetail(updatedNode);
+                        if (updatedNode) {
+                            const badge = document.getElementById('detail-badge');
+                            if (badge) {
+                                badge.textContent = STATE_LABELS[updatedNode.state];
+                                badge.className = 'state-badge ' + updatedNode.state;
+                            }
+                        }
                     }
                 } catch (err) {
                     // Silently ignore poll errors
@@ -2494,6 +2498,7 @@
 
                     setTimeout(() => loading.classList.add('hidden'), 400);
                 } catch (err) {
+                    console.error('[BOOT ERROR]', err.message, err.stack);
                     loading.innerHTML = `
                 <div class="error-container">
                     <div class="error-icon">💥</div>
@@ -2933,6 +2938,7 @@
                 if (!cy) return;
                 const node = cy.getElementById(stageId);
                 if (!node.length) return;
+                console.log('[ANIM] START', stageId, 'origBg=', node.data('bgColor'));
                 node.scratch('_origBg', node.data('bgColor'));
                 node.scratch('_origBorder', node.data('borderColor'));
                 node.scratch('_origGlow', node.data('glowColor'));
@@ -2950,9 +2956,6 @@
                             'background-color': '#312e81',
                             'border-color': '#a5b4fc',
                             'border-width': 3,
-                            'shadow-color': 'rgba(129, 140, 248, 0.9)',
-                            'shadow-blur': 40,
-                            'shadow-opacity': 1,
                         },
                     }, {
                         duration: 700,
@@ -2963,9 +2966,6 @@
                                     'background-color': '#1e1b4b',
                                     'border-color': '#6366f1',
                                     'border-width': 2,
-                                    'shadow-color': 'rgba(99, 102, 241, 0.4)',
-                                    'shadow-blur': 15,
-                                    'shadow-opacity': 0.5,
                                 },
                             }, {
                                 duration: 700,
@@ -2982,9 +2982,24 @@
                 const node = cy.getElementById(stageId);
                 if (!node.length) return;
                 node.scratch('_animating', false);
-                node.stop(true, true);
+                // Stop WITHOUT jumping to end (false) to avoid applying purple end-state
+                node.stop(true, false);
+                // Restore original color data FIRST (before removeStyle)
+                const origBg = node.scratch('_origBg');
+                const origBorder = node.scratch('_origBorder');
+                const origGlow = node.scratch('_origGlow');
+                if (origBg) {
+                    node.data('bgColor', origBg);
+                    node.data('borderColor', origBorder);
+                    node.data('glowColor', origGlow);
+                }
+                // NOW clear animation inline styles — stylesheet will read restored data
                 node.removeStyle();
-                // Let the next pollPipeline() cycle set the correct color from data
+                // Clear scratch values
+                node.scratch('_origBg', undefined);
+                node.scratch('_origBorder', undefined);
+                node.scratch('_origGlow', undefined);
+                console.log('[ANIM] STOP', stageId, 'restored to', origBg);
             }
 
             async function runPipeline(stage = null) {
@@ -3152,6 +3167,26 @@
             document.getElementById('btn-stop').addEventListener('click', async () => {
                 try {
                     await fetch('/api/stop', { method: 'POST' });
+                    // Immediately stop all animations and reset UI state
+                    if (cy) cy.nodes().forEach(n => {
+                        if (n.scratch('_animating')) {
+                            stopSingleNodeAnimation(n.id());
+                        }
+                    });
+                    isRunning = false;
+                    const allBtn = document.getElementById('btn-run-all');
+                    const stageBtn = document.getElementById('btn-run-stage');
+                    const stopBtn = document.getElementById('btn-stop');
+                    allBtn.classList.remove('running');
+                    allBtn.disabled = false;
+                    stageBtn.classList.remove('running');
+                    stageBtn.disabled = false;
+                    stopBtn.classList.remove('visible');
+                    _prevIsRunning = false;
+                    _prevRunningStage = null;
+                    _uiLaunchedRun = false;
+                    showToast('Pipeline stopped ✗', 'error');
+                    setTimeout(hideToast, 4000);
                 } catch (e) {
                     console.error('Failed to stop pipeline:', e);
                 }

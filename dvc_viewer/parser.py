@@ -19,6 +19,10 @@ from typing import Any
 
 import yaml
 
+# Cache the last successful dvc status result for use during pipeline runs
+# (when dvc status can't be called because the lock is held).
+_last_dvc_status: dict[str, Any] | None = None
+
 
 @dataclass
 class Stage:
@@ -162,15 +166,15 @@ def parse_dvc_lock(project_dir: str | Path) -> set[str]:
 
 
 def resolve_dvc_bin(project_dir: str | Path) -> str:
-    """Find the DVC binary, checking system PATH, project .venv, and our own venv."""
-    # 1. System PATH
-    found = shutil.which("dvc")
-    if found:
-        return found
-    # 2. Project's own .venv
+    """Find the DVC binary, checking project .venv first, then system PATH."""
+    # 1. Project's own .venv (most reliable — avoids broken pyenv shims)
     project_venv = Path(project_dir) / ".venv" / "bin" / "dvc"
     if project_venv.exists():
         return str(project_venv)
+    # 2. System PATH
+    found = shutil.which("dvc")
+    if found:
+        return found
     # 3. Same venv as dvc-viewer itself
     own_venv = Path(sys.executable).parent / "dvc"
     if own_venv.exists():
@@ -211,84 +215,159 @@ def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
         return None
 
 
+def _extract_pids_from_locks(lock_section: dict) -> set[int]:
+    """Extract all unique PIDs from a rwlock section (read or write)."""
+    pids: set[int] = set()
+    for _path, info in lock_section.items():
+        if isinstance(info, list):
+            for entry in info:
+                if isinstance(entry, dict) and "pid" in entry:
+                    pids.add(entry["pid"])
+        elif isinstance(info, dict) and "pid" in info:
+            pids.add(info["pid"])
+    return pids
+
+
+def _is_dvc_process_alive(pid: int) -> bool:
+    """Check if a PID is alive AND is a 'dvc repro' process (not PID reuse)."""
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+
+    if sys.platform.startswith("linux"):
+        # Check it's actually a 'dvc repro' process (not just any process
+        # with 'dvc' in its path, e.g. 'dvc-viewer hash')
+        try:
+            cmdline_path = f"/proc/{pid}/cmdline"
+            if os.path.exists(cmdline_path):
+                with open(cmdline_path, "rb") as f:
+                    cmdline_raw = f.read()
+                # cmdline is null-byte separated
+                cmdline_parts = cmdline_raw.decode("utf-8", errors="replace").split("\x00")
+                # Look for 'dvc' and 'repro' as separate arguments
+                # e.g. ['/path/to/dvc', 'repro'] or ['python', '-m', 'dvc', 'repro']
+                has_dvc = any("dvc" in part and "dvc-viewer" not in part for part in cmdline_parts)
+                has_repro = "repro" in cmdline_parts
+                if not (has_dvc and has_repro):
+                    return False
+        except OSError:
+            pass
+        # Check for zombie
+        try:
+            stat_path = f"/proc/{pid}/stat"
+            if os.path.exists(stat_path):
+                with open(stat_path, "r") as f:
+                    stat_parts = f.read().split()
+                if len(stat_parts) > 2 and stat_parts[2] == "Z":
+                    return False
+        except (OSError, IndexError):
+            pass
+
+    return True
+
+
 def detect_running_stage(
     project_dir: str | Path,
     stages: dict[str, Stage],
+    locked_stages: set[str] | None = None,
 ) -> tuple[bool, str | None, int | None]:
-    """Detect if a DVC run is in progress by reading .dvc/tmp/rwlock.
+    """Detect if a DVC run is in progress.
 
     Returns (is_running, running_stage_name, pid).
-    The running stage is identified by matching write-locked files to stage outputs.
+
+    Strategy:
+    1. Use `pgrep` to find a live `dvc repro` process (most reliable).
+    2. If found, read rwlock to identify which specific stage is running.
     """
-    rwlock_path = Path(project_dir) / ".dvc" / "tmp" / "rwlock"
-    if not rwlock_path.exists():
-        return False, None, None
-
+    # --- Step 1: Check if any `dvc repro` process is actually running ---
+    live_pid: int | None = None
     try:
-        raw = rwlock_path.read_text(encoding="utf-8").strip()
-        if not raw:
-            return False, None, None
-        lock_data = json.loads(raw)
-    except (json.JSONDecodeError, OSError):
+        result = subprocess.run(
+            ["pgrep", "-f", "dvc repro"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    candidate_pid = int(line)
+                    # Exclude our own process (in case dvc-viewer itself
+                    # matches the grep pattern)
+                    if candidate_pid != os.getpid():
+                        live_pid = candidate_pid
+                        break
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    if live_pid is None:
         return False, None, None
 
-    write_locks: dict = lock_data.get("write", {})
-    if not write_locks:
-        return False, None, None
-
-    # Extract PID from any write lock entry
-    pid: int | None = None
-    for _path, info in write_locks.items():
-        if isinstance(info, dict) and "pid" in info:
-            pid = info["pid"]
-            break
-
-    # Verify the process is still alive
-    if pid is not None:
-        try:
-            os.kill(pid, 0)  # signal 0 = check if process exists
-            
-            # Additional check for zombie processes (defunct) on Linux
-            # os.kill(pid, 0) returns True for zombies, which causes the UI 
-            # to think the pipeline is still running.
-            if sys.platform.startswith("linux") and os.path.exists(f"/proc/{pid}/stat"):
-                try:
-                    with open(f"/proc/{pid}/stat", "r") as f:
-                        stat_parts = f.read().split()
-                        # State is the 3rd field (index 2)
-                        # R=Running, S=Sleeping, D=Disk sleep, Z=Zombie, T=Stopped, t=Tracing stop
-                        if len(stat_parts) > 2 and stat_parts[2] == 'Z':
-                            return False, None, None
-                except (OSError, ValueError, IndexError):
-                    pass
-                    
-        except (ProcessLookupError, PermissionError):
-            # Process is dead — stale lock file
-            return False, None, None
-
-    # Match write-locked files to stage outputs to find the running stage
-    project_path = Path(project_dir).resolve()
-    write_locked_files: set[str] = set()
-    for locked_path in write_locks:
-        # Convert absolute paths to relative
-        try:
-            rel = str(Path(locked_path).resolve().relative_to(project_path))
-        except ValueError:
-            rel = locked_path
-        write_locked_files.add(rel)
-
+    # --- Step 2: Identify which stage is running via rwlock ---
+    rwlock_path = Path(project_dir) / ".dvc" / "tmp" / "rwlock"
     running_stage: str | None = None
-    for name, stage in stages.items():
-        stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
-        if stage_outputs & write_locked_files:
-            running_stage = name
-            break
 
-    return True, running_stage, pid
+    if rwlock_path.exists():
+        try:
+            raw = rwlock_path.read_text(encoding="utf-8").strip()
+            if raw:
+                lock_data = json.loads(raw)
+                read_locks: dict = lock_data.get("read", {})
+                write_locks: dict = lock_data.get("write", {})
+                project_path = Path(project_dir).resolve()
+
+                # Collect write-locked files held by the live PID
+                live_write_files: set[str] = set()
+                for locked_path, info_list in write_locks.items():
+                    entries = info_list if isinstance(info_list, list) else [info_list]
+                    for entry in entries:
+                        if isinstance(entry, dict) and entry.get("pid") == live_pid:
+                            try:
+                                rel = str(Path(locked_path).resolve().relative_to(project_path))
+                            except ValueError:
+                                rel = locked_path
+                            live_write_files.add(rel)
+
+                # Collect read-locked files held by the live PID
+                live_read_files: set[str] = set()
+                for locked_path, info_list in read_locks.items():
+                    entries = info_list if isinstance(info_list, list) else [info_list]
+                    for entry in entries:
+                        if isinstance(entry, dict) and entry.get("pid") == live_pid:
+                            try:
+                                rel = str(Path(locked_path).resolve().relative_to(project_path))
+                            except ValueError:
+                                rel = locked_path
+                            live_read_files.add(rel)
+
+                # Match write-locked files to stage outputs (most precise)
+                if live_write_files:
+                    for name, stage in stages.items():
+                        stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
+                        if stage_outputs & live_write_files:
+                            running_stage = name
+                            break
+
+                # Fallback: match read-locked files to stage deps
+                if running_stage is None and live_read_files:
+                    best_match: str | None = None
+                    best_count = 0
+                    for name, stage in stages.items():
+                        stage_deps = set(stage.deps)
+                        overlap = stage_deps & live_read_files
+                        if len(overlap) > best_count:
+                            best_count = len(overlap)
+                            best_match = name
+                    running_stage = best_match
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return True, running_stage, live_pid
 
 
 def build_pipeline(project_dir: str | Path) -> Pipeline:
     """Build the full pipeline DAG from a DVC project directory."""
+    global _last_dvc_status
     project_dir = Path(project_dir)
     pipeline = Pipeline()
 
@@ -296,34 +375,48 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
     stages = parse_dvc_yaml(project_dir)
     pipeline.stages = stages
 
-    # 2. Detect if a DVC run is in progress
+    # 2. Find which stages have been executed (have lock entries)
+    locked_stages = parse_dvc_lock(project_dir)
+
+    # 3. Detect if a DVC run is in progress
     is_running, running_stage, running_pid = detect_running_stage(
-        project_dir, stages
+        project_dir, stages, locked_stages
     )
     pipeline.is_running = is_running
     pipeline.running_stage = running_stage
     pipeline.running_pid = running_pid
 
-    # 3. Find which stages have been executed (have lock entries)
-    locked_stages = parse_dvc_lock(project_dir)
+    # 3 (already done above). locked_stages used for both detection and state.
 
     # 4. Get current status (which stages need re-running)
     #    Skip dvc status if a run is in progress (the lock would make it fail)
+    #    but use the last known status to preserve needs_rerun information.
     if is_running:
-        status = None
+        status = _last_dvc_status  # use cached status from before the run
     else:
         status = get_dvc_status(project_dir)
+        if status is not None:
+            _last_dvc_status = status  # cache for use during runs
 
     if status is None:
-        # DVC status unavailable (lock held or run in progress).
-        # Use dvc.lock to determine completed stages; mark running stage.
-        for name, stage in pipeline.stages.items():
-            if name == running_stage:
-                stage.state = "running"
-            elif name in locked_stages:
-                stage.state = "valid"  # was completed before this run
-            else:
-                stage.state = "never_run"
+        # DVC status completely unavailable (DVC not found, timeout, etc.)
+        # Use dvc.lock as best-effort fallback.
+        if is_running:
+            for name, stage in pipeline.stages.items():
+                if name == running_stage:
+                    stage.state = "running"
+                elif name in locked_stages:
+                    stage.state = "valid"
+                else:
+                    stage.state = "never_run"
+        else:
+            # Not running, but DVC couldn't provide status.
+            # Default to needs_rerun so the user knows something is off.
+            for name, stage in pipeline.stages.items():
+                if name in locked_stages:
+                    stage.state = "needs_rerun"
+                else:
+                    stage.state = "never_run"
     else:
         stages_needing_rerun = set(status.keys()) if status else set()
 

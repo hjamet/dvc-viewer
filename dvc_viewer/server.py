@@ -80,6 +80,7 @@ async def get_pipeline():
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+
 @app.get("/api/file/info")
 async def file_info(path: str = Query(..., description="Relative file path")):
     """Return metadata about a file: type, size, exists."""
