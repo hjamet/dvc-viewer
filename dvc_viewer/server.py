@@ -636,6 +636,7 @@ async def run_pipeline_stream(
 
         global _running_proc
         try:
+            print(f"🚀 Running pipeline command: {' '.join(cmd)}")
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -698,6 +699,7 @@ async def run_pipeline_stream(
                 success = False
 
             # Send log line
+            print(f"[{current_stage or 'dvc'}] {line}")
             yield sse_event("log", {
                 "stage": current_stage,
                 "line": line,
