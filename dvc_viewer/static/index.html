@@ -2678,13 +2678,15 @@
                     updateVersionNav();
 
                     if (!info.exists) {
+                        const msg = _versionHistory.length > 0
+                            ? 'Current version not on disk. Use the history sidebar to view past versions.'
+                            : 'File not found (output not yet generated?)';
                         body.innerHTML = `
                     <div class="file-not-found">
-                        <div class="file-not-found-icon">🔍</div>
-                        <div class="file-not-found-text">File not found (output not yet generated?)</div>
+                        <div class="file-not-found-icon">${_versionHistory.length > 0 ? '🕰️' : '🔍'}</div>
+                        <div class="file-not-found-text">${msg}</div>
                         <div class="file-not-found-path">${filePath}</div>
                     </div>`;
-                        // Even if current doesn't exist, user can navigate to older versions
                         return;
                     }
 

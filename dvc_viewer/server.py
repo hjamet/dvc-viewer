@@ -48,14 +48,14 @@ _PDF_EXTENSIONS = {".pdf"}
 _TEXT_EXTENSIONS = {".json", ".yaml", ".yml", ".txt", ".md", ".log", ".jsonl"}
 
 
-def _safe_resolve(rel_path: str) -> Path | None:
+def _safe_resolve(rel_path: str, require_exists: bool = True) -> Path | None:
     """Resolve a relative path safely within the project directory."""
     project = Path(_project_dir).resolve()
     target = (project / rel_path).resolve()
     # Prevent path traversal
     if not str(target).startswith(str(project)):
         return None
-    if not target.exists() or not target.is_file():
+    if require_exists and (not target.exists() or not target.is_file()):
         return None
     return target
 
@@ -84,7 +84,8 @@ async def get_pipeline():
 @app.get("/api/file/info")
 async def file_info(path: str = Query(..., description="Relative file path")):
     """Return metadata about a file: type, size, exists."""
-    target = _safe_resolve(path)
+    # Allow resolution even if missing for metadata purposes in history view
+    target = _safe_resolve(path, require_exists=False)
     if target is None:
         return JSONResponse(content={"error": "File not found", "exists": False}, status_code=404)
 
@@ -100,12 +101,14 @@ async def file_info(path: str = Query(..., description="Relative file path")):
     else:
         file_type = "binary"
 
-    stat = target.stat()
+    exists = target.exists() and target.is_file()
+    size = target.stat().st_size if exists else 0
+
     return JSONResponse(content={
-        "exists": True,
+        "exists": exists,
         "type": file_type,
         "name": target.name,
-        "size": stat.st_size,
+        "size": size,
         "extension": ext,
     })
 
