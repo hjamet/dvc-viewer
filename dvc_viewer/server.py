@@ -32,6 +32,12 @@ _project_dir: str = os.environ.get("DVC_VIEWER_PROJECT_DIR", os.getcwd())
 
 # Resolve the DVC binary path (checks system PATH, project .venv, our venv)
 _dvc_bin = resolve_dvc_bin(_project_dir)
+
+# Initialize status cache at startup to avoid "blind" fallback during active runs
+try:
+    build_pipeline(_project_dir)
+except Exception:
+    pass
  
 
 # Track the running dvc repro process so we can stop it
