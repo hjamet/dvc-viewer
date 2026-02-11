@@ -26,38 +26,27 @@ stages:
     outs:
       - data.txt
   
-  process:
-    cmd: cat data.txt > processed.txt
-    deps:
-      - data.txt
-    outs:
-      - processed.txt
+  build:
+    foreach: [apple, orange]
+    do:
+      cmd: echo "\${item}" > "\${item}.txt"
+      outs:
+        - "\${item}.txt"
 
-  train:
-    cmd: echo "Training model..." > model.pkl
+  collect:
+    cmd: cat apple.txt orange.txt > fruit.txt
     deps:
-      - data.txt
+      - apple.txt
+      - orange.txt
     outs:
-      - model.pkl
-    metrics:
-      - metrics.json:
-          cache: false
-
-  evaluate:
-    cmd: echo "Evaluating..." > scores.json
-    deps:
-      - model.pkl
-      - processed.txt
-    metrics:
-      - scores.json:
-          cache: false
+      - fruit.txt
 
   standalone:
     cmd: echo "Standalone stage"
 EOF
 
     # Create dummy script files
-    touch data.txt processed.txt model.pkl metrics.json scores.json
+    touch data.txt apple.txt orange.txt fruit.txt
 
     # Commit
     git add .
@@ -68,9 +57,9 @@ else
 fi
 
 echo "graph:"
-echo "  prepare -> (process, train)"
-echo "  process -> (evaluate)"
-echo "  train -> (evaluate)"
+echo "  prepare"
+echo "  build@apple, build@orange"
+echo "  collect"
 echo "  standalone"
 echo ""
 
