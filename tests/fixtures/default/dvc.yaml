@@ -1,0 +1,82 @@
+vars:
+  - config/params.yaml
+
+stages:
+  prepare:
+    cmd: echo "raw data" > data.txt
+    outs:
+      - data.txt
+
+  # Simple processing
+  process:
+    cmd: cat data.txt > processed.txt
+    deps:
+      - data.txt
+    outs:
+      - processed.txt
+
+  # Foreach with list
+  featurize:
+    foreach: [v1, v2, v3]
+    do:
+      cmd: echo "Feature ${item}" > "features_${item}.txt"
+      deps:
+        - processed.txt
+      outs:
+        - "features_${item}.txt"
+
+  # Foreach with dict
+  train:
+    foreach:
+      small: 10
+      large: 100
+    do:
+      cmd: python3 train.py --epochs ${item} --name ${key}
+      deps:
+        - features_v1.txt
+      params:
+        - params.yaml:
+            - lr
+            - batch_size
+      outs:
+        - "model_${key}.pkl"
+
+  # Metrics and Plots
+  evaluate:
+    foreach: [small, large]
+    do:
+      cmd: python3 evaluate.py --model "model_${item}.pkl"
+      deps:
+        - "model_${item}.pkl"
+      metrics:
+        - "metrics_${item}.json":
+            cache: false
+      plots:
+        - "confusion_${item}.csv":
+            template: confusion
+            x: actual
+            y: predicted
+
+  # Aggregation stage
+  aggregate:
+    cmd: cat metrics_small.json metrics_large.json > final_report.txt
+    deps:
+      - metrics_small.json
+      - metrics_large.json
+    outs:
+      - final_report.txt
+
+  # A stage that is always changed
+  monitor:
+    cmd: date > heartbeat.log
+    always_changed: true
+    outs:
+      - heartbeat.log
+
+  # Hydra config demo
+  hydra_run:
+    cmd: python3 main.py --config-name base
+    deps:
+      - data.txt
+    outs:
+      - outputs/

@@ -5,63 +5,44 @@ set -euo pipefail
 
 # Create or use a fixed test directory
 TEST_DIR="$HOME/dvc-viewer-test-project"
-echo "🧪 Using test project in: $TEST_DIR"
+FIXTURES_DIR="$HOME/code/dvc-viewer/tests/fixtures"
 
-# Check if dvc.yaml exists, if not initialize
-if [ ! -f "$TEST_DIR/dvc.yaml" ]; then
-    echo "⚡ Initializing new test project..."
-    mkdir -p "$TEST_DIR"
-    cd "$TEST_DIR"
-    
-    # Initialize git and dvc
-    git init -q
-    dvc init -q
-    git commit -m "Initialize DVC" --allow-empty
+# Handle arguments
+FIXTURE_NAME=${1:-default}
+FIXTURE_PATH="$FIXTURES_DIR/$FIXTURE_NAME"
 
-    # Create a dummy dvc.yaml
-    cat > dvc.yaml <<EOF
-stages:
-  prepare:
-    cmd: echo "Preparing data..." > data.txt
-    outs:
-      - data.txt
-  
-  build:
-    foreach: [apple, orange]
-    do:
-      cmd: echo "\${item}" > "\${item}.txt"
-      outs:
-        - "\${item}.txt"
-
-  collect:
-    cmd: cat apple.txt orange.txt > fruit.txt
-    deps:
-      - apple.txt
-      - orange.txt
-    outs:
-      - fruit.txt
-
-  standalone:
-    cmd: echo "Standalone stage"
-EOF
-
-    # Create dummy script files
-    touch data.txt apple.txt orange.txt fruit.txt
-
-    # Commit
-    git add .
-    git commit -m "Add pipeline"
-    echo "✅ Project initialized."
-else
-    echo "✅ Found existing project."
+if [ ! -d "$FIXTURE_PATH" ]; then
+    echo "❌ Fixture '$FIXTURE_NAME' not found in $FIXTURES_DIR"
+    echo "   Available fixtures:"
+    ls "$FIXTURES_DIR"
+    exit 1
 fi
 
-echo "graph:"
-echo "  prepare"
-echo "  build@apple, build@orange"
-echo "  collect"
-echo "  standalone"
-echo ""
+echo "🧪 Using fixture '$FIXTURE_NAME' for test project: $TEST_DIR"
+
+# Always re-initialize for clean test
+rm -rf "$TEST_DIR"
+mkdir -p "$TEST_DIR"
+cd "$TEST_DIR"
+
+# Initialize git and dvc
+git init -q
+dvc init -q
+git commit -m "Initialize DVC" --allow-empty
+
+# Copy fixture files
+cp -rv "$FIXTURE_PATH/"* .
+
+# Ensure all mentioned script paths exist even if empty
+# (Extract .py files from dvc.yaml)
+if [ -f "dvc.yaml" ]; then
+    grep -oE "[a-zA-Z0-9_/]+\.py" dvc.yaml | sort -u | xargs touch 2>/dev/null || true
+fi
+
+# Add and commit
+git add .
+git commit -m "Add pipeline from fixture $FIXTURE_NAME"
+echo "✅ Project initialized with fixture '$FIXTURE_NAME'."
 
 # Re-install dvc-viewer from source
 echo "📦 Installing dvc-viewer in editable mode..."

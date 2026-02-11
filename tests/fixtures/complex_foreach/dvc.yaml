@@ -1,0 +1,45 @@
+stages:
+  prepare:
+    cmd: echo "base data" > data.txt
+    outs:
+      - data.txt
+
+  # List foreach
+  process:
+    foreach: [v1, v2]
+    do:
+      cmd: echo "Processing ${item}" > "data_${item}.txt"
+      deps:
+        - data.txt
+      outs:
+        - "data_${item}.txt"
+
+  # Dictionary foreach
+  train:
+    foreach:
+      short: 10
+      long: 100
+    do:
+      cmd: python3 train.py --epochs ${item} --name ${key}
+      deps:
+        - data.txt
+      outs:
+        - "model_${key}.pkl"
+
+  # Foreach depending on another foreach (partially)
+  compare:
+    foreach: [short, long]
+    do:
+      cmd: cat "model_${item}.pkl" > "eval_${item}.txt"
+      deps:
+        - "model_${item}.pkl"
+      outs:
+        - "eval_${item}.txt"
+
+  collect:
+    cmd: cat eval_short.txt eval_long.txt > final.txt
+    deps:
+      - eval_short.txt
+      - eval_long.txt
+    outs:
+      - final.txt

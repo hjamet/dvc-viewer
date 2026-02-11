@@ -54,6 +54,28 @@ def _find_script_in_cmd(cmd: str, project_dir: Path) -> Path | None:
     return None
 
 
+def _resolve_foreach_items(items: Any, project_dir: Path) -> Any:
+    """Resolve ${var} from params.yaml if items is a string variable reference."""
+    if isinstance(items, str) and items.strip().startswith("${") and items.strip().endswith("}"):
+        var_name = items.strip()[2:-1]  # remove ${ and }
+        params_path = project_dir / "params.yaml"
+        if params_path.exists():
+            try:
+                with open(params_path, "r") as f:
+                    params = yaml.safe_load(f) or {}
+                # Handle nested keys e.g. ${foo.bar}
+                val = params
+                for part in var_name.split("."):
+                    if isinstance(val, dict) and part in val:
+                        val = val[part]
+                    else:
+                        return items # Failed to resolve
+                return val
+            except Exception:
+                return items
+    return items
+
+
 def update_dvc_yaml(project_dir: Path) -> None:
     """
     Main logic:
@@ -116,6 +138,7 @@ def update_dvc_yaml(project_dir: Path) -> None:
         # Handle foreach
         if "foreach" in stage and "do" in stage:
             items = stage["foreach"]
+            items = _resolve_foreach_items(items, project_dir)
             do_block = stage["do"]
             
             # We want to inject the dependency into the do_block
