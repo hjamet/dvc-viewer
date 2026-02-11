@@ -508,13 +508,20 @@ async def freeze_stage(request: Request):
         count = 0
         
         for name in descendants:
-            if name in stages_data:
-                # Modifying the dict in place
-                if frozen:
-                    stages_data[name]["frozen"] = True
+            # Handle foreach stages: name like "train@small" -> base "train"
+            base_name = name.split("@")[0]
+            if base_name in stages_data:
+                # For foreach stages, DVC expects 'frozen' inside the 'do' block
+                if "foreach" in stages_data[base_name] and "do" in stages_data[base_name]:
+                    if frozen:
+                        stages_data[base_name]["do"]["frozen"] = True
+                    else:
+                        stages_data[base_name]["do"].pop("frozen", None)
                 else:
-                    # Remove the key if false to keep file clean
-                    stages_data[name].pop("frozen", None)
+                    if frozen:
+                        stages_data[base_name]["frozen"] = True
+                    else:
+                        stages_data[base_name].pop("frozen", None)
                 count += 1
         
         data["stages"] = stages_data
@@ -647,10 +654,10 @@ async def run_pipeline_stream(
             })
             return
 
-        re_running = re.compile(r"Running stage '([\w-]+)'")
-        re_skipped = re.compile(r"Stage '([\w-]+)' didn't change")
-        re_failed  = re.compile(r"failed to reproduce '([\w-]+)'")
-        re_failed2 = re.compile(r"ERROR:.*stage '([\w-]+)'")
+        re_running = re.compile(r"Running stage '([\w@.-]+)'")
+        re_skipped = re.compile(r"Stage '([\w@.-]+)' didn't change")
+        re_failed  = re.compile(r"failed to reproduce '([\w@.-]+)'")
+        re_failed2 = re.compile(r"ERROR:.*stage '([\w@.-]+)'")
 
         for raw_line in proc.stdout:
             line = raw_line.rstrip("\n")

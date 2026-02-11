@@ -35,7 +35,7 @@ stages:
       deps:
         - features_v1.txt
       params:
-        - params.yaml:
+        - config/params.yaml:
             - lr
             - batch_size
       outs:

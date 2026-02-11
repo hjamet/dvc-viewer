@@ -170,7 +170,8 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             items = definition["foreach"]
             do_block = definition["do"]
             
-            expanded_stages = _expand_foreach(name, items, do_block, project_dir)
+            is_frozen = definition.get("frozen", False)
+            expanded_stages = _expand_foreach(name, items, do_block, project_dir, is_frozen)
             stages.update(expanded_stages)
             continue
 
@@ -192,7 +193,7 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     return stages
 
 
-def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str | Path) -> dict[str, Stage]:
+def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str | Path, parent_frozen: bool = False) -> dict[str, Stage]:
     """Expand a foreach block into multiple individual stages."""
     expanded: dict[str, Stage] = {}
     
@@ -235,7 +236,7 @@ def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str
             plots=_resolve_dep_or_out(sub(do_block.get("plots"))),
             always_changed=do_block.get("always_changed", False),
             hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
-            frozen=do_block.get("frozen", False),
+            frozen=do_block.get("frozen", parent_frozen),
         )
         expanded[name] = stage
         
