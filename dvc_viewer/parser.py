@@ -23,6 +23,32 @@ import yaml
 # (when dvc status can't be called because the lock is held).
 _last_dvc_status: dict[str, Any] | None = None
 
+# Track stages that failed during a run (since DVC status might not reflect this immediately)
+_failed_stages: set[str] = set()
+
+
+def mark_stage_started(name: str):
+    """Mark a stage as started, clearing any previous failure state."""
+    global _failed_stages
+    if name in _failed_stages:
+        _failed_stages.remove(name)
+
+
+def mark_stage_complete(name: str):
+    """Mark a stage as complete in the cached status."""
+    global _last_dvc_status, _failed_stages
+    if _last_dvc_status and name in _last_dvc_status:
+        del _last_dvc_status[name]
+    if name in _failed_stages:
+        _failed_stages.remove(name)
+
+
+def mark_stage_failed(name: str):
+    """Mark a stage as failed."""
+    global _failed_stages
+    if name:
+        _failed_stages.add(name)
+
 
 @dataclass
 class Stage:
@@ -36,6 +62,7 @@ class Stage:
     metrics: list[str] = field(default_factory=list)
     plots: list[str] = field(default_factory=list)
     state: str = "never_run"  # valid | needs_rerun | never_run | running
+    always_changed: bool = False
     hydra_config: str | None = None  # resolved relative path to config YAML
 
 
@@ -142,6 +169,7 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             params=_resolve_params(definition.get("params")),
             metrics=_resolve_dep_or_out(definition.get("metrics")),
             plots=_resolve_dep_or_out(definition.get("plots")),
+            always_changed=definition.get("always_changed", False),
             hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
         )
         stages[name] = stage
@@ -413,7 +441,9 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
             # Not running, but DVC couldn't provide status.
             # Default to needs_rerun so the user knows something is off.
             for name, stage in pipeline.stages.items():
-                if name in locked_stages:
+                if name in _failed_stages:
+                    stage.state = "failed"
+                elif name in locked_stages:
                     stage.state = "needs_rerun"
                 else:
                     stage.state = "never_run"
@@ -423,6 +453,8 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
         for name, stage in pipeline.stages.items():
             if name == running_stage:
                 stage.state = "running"
+            elif name in _failed_stages:
+                stage.state = "failed"
             elif name not in locked_stages:
                 stage.state = "never_run"
             elif name in stages_needing_rerun:
@@ -441,16 +473,11 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
         if stage.hydra_config:
             all_files.append(stage.hydra_config)
             
-        if name == 'train_mixer':
-            print(f"[DEBUG] train_mixer all_files: {all_files}")
         for f in all_files:
             if ":" in f: continue  # Skip params like 'params.yaml:lr'
             full_path = project_dir / f
             exists = full_path.exists()
-            if name == 'train_mixer':
-                print(f"[DEBUG] Checking '{f}' -> exists={exists} (full_path={full_path})")
             if not exists:
-                print(f"[DEBUG] Stage '{name}' marked needs_rerun because '{f}' is missing.")
                 stage.state = "needs_rerun"
                 break
 
@@ -500,7 +527,7 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
     dirty = {
         name
         for name, stage in pipeline.stages.items()
-        if stage.state in ("needs_rerun", "never_run")
+        if stage.state in ("needs_rerun", "never_run") and not stage.always_changed
     }
     # Note: "running" state propagation is handled above more aggressively
     

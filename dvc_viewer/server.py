@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 import yaml
 
-from .parser import build_pipeline, pipeline_to_dict, resolve_dvc_bin
+from .parser import build_pipeline, pipeline_to_dict, resolve_dvc_bin, mark_stage_complete, mark_stage_failed, mark_stage_started
 
 app = FastAPI(title="DVC Viewer", version="0.1.0")
 
@@ -583,19 +583,23 @@ async def run_pipeline_stream(
                 new_stage = m_run.group(1)
                 # Previous stage finished successfully
                 if current_stage and current_stage != new_stage:
+                    mark_stage_complete(current_stage)
                     yield sse_event("stage_done", {
                         "stage": current_stage, "success": True,
                     })
                 current_stage = new_stage
+                mark_stage_started(new_stage)
                 yield sse_event("stage_start", {"stage": new_stage})
 
             elif m_skip:
                 skipped = m_skip.group(1)
                 # Close previous stage if needed
                 if current_stage and current_stage != skipped:
+                    mark_stage_complete(current_stage)
                     yield sse_event("stage_done", {
                         "stage": current_stage, "success": True,
                     })
+                mark_stage_complete(skipped)
                 current_stage = None
                 yield sse_event("stage_skip", {"stage": skipped})
 
@@ -603,6 +607,7 @@ async def run_pipeline_stream(
             m_fail = re_failed.search(line) or re_failed2.search(line)
             if m_fail:
                 failed_stage = m_fail.group(1)
+                mark_stage_failed(failed_stage)
                 success = False
 
             # Send log line
@@ -617,6 +622,8 @@ async def run_pipeline_stream(
         # Close final stage
         if current_stage:
             stage_ok = proc.returncode == 0 and (failed_stage != current_stage)
+            if stage_ok:
+                mark_stage_complete(current_stage)
             yield sse_event("stage_done", {
                 "stage": current_stage,
                 "success": stage_ok,
