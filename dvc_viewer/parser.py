@@ -247,6 +247,21 @@ def detect_running_stage(
     if pid is not None:
         try:
             os.kill(pid, 0)  # signal 0 = check if process exists
+            
+            # Additional check for zombie processes (defunct) on Linux
+            # os.kill(pid, 0) returns True for zombies, which causes the UI 
+            # to think the pipeline is still running.
+            if sys.platform.startswith("linux") and os.path.exists(f"/proc/{pid}/stat"):
+                try:
+                    with open(f"/proc/{pid}/stat", "r") as f:
+                        stat_parts = f.read().split()
+                        # State is the 3rd field (index 2)
+                        # R=Running, S=Sleeping, D=Disk sleep, Z=Zombie, T=Stopped, t=Tracing stop
+                        if len(stat_parts) > 2 and stat_parts[2] == 'Z':
+                            return False, None, None
+                except (OSError, ValueError, IndexError):
+                    pass
+                    
         except (ProcessLookupError, PermissionError):
             # Process is dead — stale lock file
             return False, None, None
@@ -341,16 +356,37 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
 
     # 6. Propagate needs_rerun transitively through the DAG.
     #    If stage A needs rerun (or is running), all downstream stages
-    #    that are currently "valid" should also be marked needs_rerun.
+    #    should be marked needs_rerun (Yellow).
     downstream: dict[str, list[str]] = {}
     for edge in pipeline.edges:
         downstream.setdefault(edge.source, []).append(edge.target)
 
+    # If a stage is running, its descendants are pending execution -> needs_rerun
+    if is_running and running_stage:
+        # Mark all descendants of the running stage as 'needs_rerun' (Yellow)
+        # regardless of what dvc.lock says (which reflects the previous successful run)
+        queue = [running_stage]
+        visited_descendants = set()
+        while queue:
+            current = queue.pop(0)
+            children = downstream.get(current, [])
+            for child in children:
+                if child not in visited_descendants:
+                    visited_descendants.add(child)
+                    queue.append(child)
+                    # Force state to needs_rerun (Yellow)
+                    child_stage = pipeline.stages.get(child)
+                    if child_stage:
+                        child_stage.state = "needs_rerun"
+
+    # Also perform standard propagation for static needs_rerun states
     dirty = {
         name
         for name, stage in pipeline.stages.items()
-        if stage.state in ("needs_rerun", "running", "never_run")
+        if stage.state in ("needs_rerun", "never_run")
     }
+    # Note: "running" state propagation is handled above more aggressively
+    
     visited: set[str] = set()
     queue = list(dirty)
     
@@ -363,6 +399,7 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
         children = downstream.get(current, [])
         for child in children:
             child_stage = pipeline.stages.get(child)
+            # If child was 'valid' (Green), it is invalidated
             if child_stage and child_stage.state == "valid":
                 child_stage.state = "needs_rerun"
             if child not in visited:

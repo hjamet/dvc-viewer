@@ -2343,10 +2343,21 @@
                     const nowRunning = data.is_running || false;
                     const nowStage = data.running_stage || null;
 
-                    // Detect structural changes (nodes/edges added or removed)
-                    const currentNodes = cy ? cy.nodes().length : 0;
-                    const currentEdges = cy ? cy.edges().length : 0;
-                    if (data.nodes.length !== currentNodes || data.edges.length !== currentEdges) {
+                    // Detect structural changes (nodes/edges actually added or removed)
+                    // Compare by IDs, not counts, to avoid false positives from
+                    // duplicate edge IDs (same source->target with different labels)
+                    let structureChanged = false;
+                    if (!cy || cy.nodes().length === 0) {
+                        structureChanged = true;
+                    } else {
+                        const cyNodeIds = new Set(cy.nodes().map(n => n.id()));
+                        const apiNodeIds = new Set(data.nodes.map(n => n.id));
+                        if (cyNodeIds.size !== apiNodeIds.size ||
+                            [...apiNodeIds].some(id => !cyNodeIds.has(id))) {
+                            structureChanged = true;
+                        }
+                    }
+                    if (structureChanged) {
                         const elements = buildElements(data);
                         if (cy) cy.destroy();
                         initGraph(elements);
@@ -2408,37 +2419,38 @@
                     _prevIsRunning = nowRunning;
                     _prevRunningStage = nowStage;
 
-                    // ── Update all node states/colors from data ──
+                    // ── Update node states/colors only when changed ──
                     for (const node of data.nodes) {
                         const cyNode = cy.getElementById(node.id);
                         if (!cyNode.length) continue;
 
-                        // Skip color update for nodes with active animation
-                        // (the animation handles their visual state)
-                        if (cyNode.scratch('_animating')) {
-                            cyNode.data({
-                                state: node.state,
-                                deps: node.deps,
-                                outs: node.outs,
-                                metrics: node.metrics,
-                                plots: node.plots,
-                            });
-                            continue;
-                        }
-
-                        const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
-                        cyNode.removeStyle();
+                        // Always keep metadata in sync
+                        const prevState = cyNode.data('state');
                         cyNode.data({
-                            state: node.state,
                             deps: node.deps,
                             outs: node.outs,
                             metrics: node.metrics,
                             plots: node.plots,
-                            bgColor: sc.bg,
-                            borderColor: sc.border,
-                            textColor: sc.text,
-                            glowColor: sc.glow,
                         });
+
+                        // Skip color update for nodes with active animation
+                        if (cyNode.scratch('_animating')) {
+                            cyNode.data('state', node.state);
+                            continue;
+                        }
+
+                        // Only update visual styles if state actually changed
+                        if (prevState !== node.state) {
+                            const sc = STATE_COLORS[node.state] || STATE_COLORS.never_run;
+                            cyNode.removeStyle();
+                            cyNode.data({
+                                state: node.state,
+                                bgColor: sc.bg,
+                                borderColor: sc.border,
+                                textColor: sc.text,
+                                glowColor: sc.glow,
+                            });
+                        }
                     }
 
                     updateStats(data);
