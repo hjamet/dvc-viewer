@@ -729,6 +729,183 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
     return pipeline
 
 
+# ─── Git history helpers ─────────────────────────────────────────────────
+
+
+def _git_show_file(project_dir: Path, commit: str, path: str) -> str | None:
+    """Read a file at a specific git commit via `git show`. Returns None if missing."""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit}:{path}"],
+            capture_output=True, text=True,
+            cwd=str(project_dir), timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def get_commit_list(project_dir: str | Path, limit: int = 100) -> list[dict]:
+    """Return the git commit history for the repository."""
+    project_dir = Path(project_dir)
+    try:
+        result = subprocess.run(
+            ["git", "log", f"-{limit}", "--pretty=format:%H|%h|%s|%an|%ai"],
+            capture_output=True, text=True,
+            cwd=str(project_dir), timeout=15,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"git log failed: {result.stderr.strip()}")
+
+        commits = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("|", 4)
+            if len(parts) >= 5:
+                commits.append({
+                    "hash": parts[0],
+                    "short_hash": parts[1],
+                    "message": parts[2],
+                    "author": parts[3],
+                    "date": parts[4],
+                })
+        return commits
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise RuntimeError(f"Failed to list commits: {e}")
+
+
+def _parse_dvc_yaml_from_data(
+    data: dict,
+    params: dict,
+    project_dir: Path,
+) -> dict[str, Stage]:
+    """Parse stages from already-loaded dvc.yaml data (no filesystem access)."""
+    stages_data = data.get("stages", {})
+    stages: dict[str, Stage] = {}
+
+    for i, (name, definition) in enumerate(stages_data.items()):
+        if not isinstance(definition, dict):
+            continue
+
+        if "foreach" in definition and "do" in definition:
+            items = _resolve_interpolation(definition["foreach"], params)
+            do_block = definition["do"]
+            is_frozen = definition.get("frozen", False)
+            # _expand_foreach uses _extract_hydra_config which checks filesystem,
+            # but we pass project_dir anyway — hydra_config will be None for
+            # missing files, which is acceptable in history mode.
+            expanded_stages = _expand_foreach(
+                name, items, do_block, project_dir,
+                is_frozen, definition_order_start=i * 1000,
+            )
+            stages.update(expanded_stages)
+            continue
+
+        cmd = definition.get("cmd", "")
+        stage = Stage(
+            name=name,
+            cmd=cmd,
+            deps=_resolve_dep_or_out(definition.get("deps")),
+            outs=_resolve_dep_or_out(definition.get("outs")),
+            params=_resolve_params(definition.get("params")),
+            metrics=_resolve_dep_or_out(definition.get("metrics")),
+            plots=_resolve_dep_or_out(definition.get("plots")),
+            always_changed=definition.get("always_changed", False),
+            # hydra_config requires filesystem check — skip in history mode
+            hydra_config=_extract_hydra_config(cmd, project_dir),
+            frozen=definition.get("frozen", False),
+            definition_order=i,
+        )
+        stages[name] = stage
+
+    return stages
+
+
+def build_pipeline_at_commit(project_dir: str | Path, commit: str) -> Pipeline:
+    """Build the pipeline DAG as it was at a specific git commit.
+
+    Reads dvc.yaml, dvc.lock, and params.yaml via `git show` (no checkout).
+    Stages with lock entries are marked 'valid', others 'never_run'.
+    No dvc status or running detection is performed.
+    """
+    project_dir = Path(project_dir)
+    pipeline = Pipeline()
+
+    # 1. Read dvc.yaml at commit
+    dvc_yaml_content = _git_show_file(project_dir, commit, "dvc.yaml")
+    if dvc_yaml_content is None:
+        raise FileNotFoundError(f"No dvc.yaml found at commit {commit}")
+
+    dvc_data = yaml.safe_load(dvc_yaml_content) or {}
+
+    # 2. Load params for interpolation (params.yaml + inline vars at commit)
+    params: dict = {}
+    params_content = _git_show_file(project_dir, commit, "params.yaml")
+    if params_content:
+        loaded = yaml.safe_load(params_content) or {}
+        params.update(loaded)
+
+    # Handle vars section (only inline dicts — file vars require filesystem)
+    vars_section = dvc_data.get("vars", [])
+    if isinstance(vars_section, list):
+        for var_entry in vars_section:
+            if isinstance(var_entry, dict):
+                params.update(var_entry)
+            elif isinstance(var_entry, str):
+                var_content = _git_show_file(project_dir, commit, var_entry)
+                if var_content:
+                    loaded = yaml.safe_load(var_content) or {}
+                    params.update(loaded)
+
+    # 3. Parse stages
+    stages = _parse_dvc_yaml_from_data(dvc_data, params, project_dir)
+    pipeline.stages = stages
+
+    # 4. Read dvc.lock at commit to determine which stages were executed
+    lock_content = _git_show_file(project_dir, commit, "dvc.lock")
+    locked_stages: set[str] = set()
+    if lock_content:
+        lock_data = yaml.safe_load(lock_content) or {}
+        locked_stages = set(lock_data.get("stages", {}).keys())
+
+    # 5. Assign states: locked → valid, unlocked → never_run
+    for name, stage in pipeline.stages.items():
+        if name in locked_stages:
+            stage.state = "valid"
+        else:
+            stage.state = "never_run"
+
+    # 6. Build edges (same logic as build_pipeline)
+    output_to_stage: dict[str, str] = {}
+    for name, stage in stages.items():
+        for out in stage.outs:
+            output_to_stage[out] = name
+        for metric in stage.metrics:
+            output_to_stage[metric] = name
+
+    for name, stage in stages.items():
+        for dep in stage.deps:
+            if dep in output_to_stage:
+                source_stage = output_to_stage[dep]
+                if source_stage != name:
+                    pipeline.edges.append(
+                        Edge(source=source_stage, target=name, label=dep)
+                    )
+            else:
+                for out, source_stage in output_to_stage.items():
+                    if dep.startswith(out.rstrip("/") + "/"):
+                        if source_stage != name:
+                            pipeline.edges.append(
+                                Edge(source=source_stage, target=name, label=dep)
+                            )
+                        break
+
+    return pipeline
+
+
 def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
     """Convert a Pipeline to a JSON-serializable dict for the API."""
     # Determine the project dir from the first stage or fallback

@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 import yaml
 
-from .parser import build_pipeline, pipeline_to_dict, resolve_dvc_bin, mark_stage_complete, mark_stage_failed, mark_stage_started
+from .parser import build_pipeline, build_pipeline_at_commit, get_commit_list, pipeline_to_dict, resolve_dvc_bin, mark_stage_complete, mark_stage_failed, mark_stage_started
 
 app = FastAPI(title="DVC Viewer", version="0.1.0")
 
@@ -97,6 +97,36 @@ async def get_pipeline(force_refresh: bool = Query(False, description="Bypass ca
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+
+@app.get("/api/commits", response_class=JSONResponse)
+async def list_commits(limit: int = Query(100, description="Max commits to return")):
+    """Return the git commit history for the project repository."""
+    try:
+        commits = get_commit_list(_project_dir, limit=limit)
+        return JSONResponse(content={"commits": commits})
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/pipeline/at-commit", response_class=JSONResponse)
+async def get_pipeline_at_commit(
+    commit: str = Query(..., description="Git commit hash"),
+):
+    """Return the parsed DVC pipeline as it was at a specific git commit."""
+    # Validate commit hash (alphanumeric only)
+    if not re.match(r'^[a-f0-9]+$', commit):
+        return JSONResponse(content={"error": "Invalid commit hash"}, status_code=400)
+    try:
+        pipeline = build_pipeline_at_commit(_project_dir, commit)
+        data = pipeline_to_dict(pipeline)
+        # Add commit info to the response
+        data["commit"] = commit
+        data["is_history"] = True
+        return JSONResponse(content=data)
+    except FileNotFoundError as e:
+        return JSONResponse(content={"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.get("/api/file/info")

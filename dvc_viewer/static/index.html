@@ -1361,6 +1361,100 @@
             cursor: not-allowed;
         }
 
+        /* ─── Commit Navigation ─── */
+        .commit-nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 20px;
+            padding-left: 20px;
+            border-left: 1px solid var(--border);
+        }
+
+        .commit-nav-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-glass);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }
+
+        .commit-nav-btn:hover:not(:disabled) {
+            background: var(--accent-glow);
+            border-color: var(--border-glow);
+            color: var(--text-primary);
+        }
+
+        .commit-nav-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .commit-nav-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .commit-hash {
+            font-family: 'JetBrains Mono', 'SF Mono', monospace;
+            font-size: 12px;
+            color: var(--accent);
+            background: rgba(99, 102, 241, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .commit-message {
+            font-size: 12px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .commit-badge-head {
+            font-size: 10px;
+            font-weight: 600;
+            color: #10b981;
+            background: rgba(16, 185, 129, 0.15);
+            padding: 1px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            flex-shrink: 0;
+        }
+
+        .commit-badge-history {
+            font-size: 10px;
+            font-weight: 600;
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.15);
+            padding: 1px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            flex-shrink: 0;
+        }
+
+        /* Dim run buttons when in history mode */
+        .history-mode .run-btn,
+        .history-mode .stop-btn {
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
         .version-info {
             flex: 1;
             display: flex;
@@ -1742,6 +1836,15 @@
                 <div class="header-title">DVC Viewer</div>
                 <div class="header-subtitle">Pipeline Visualization</div>
             </div>
+            <div class="commit-nav" id="commit-nav" style="display:none;">
+                <button class="commit-nav-btn" id="commit-older" title="Older commit">◀</button>
+                <div class="commit-nav-info">
+                    <span class="commit-badge-head" id="commit-badge">HEAD</span>
+                    <span class="commit-hash" id="commit-hash"></span>
+                    <span class="commit-message" id="commit-msg"></span>
+                </div>
+                <button class="commit-nav-btn" id="commit-newer" title="Newer commit">▶</button>
+            </div>
         </div>
         <div class="header-right">
             <div class="legend">
@@ -1914,6 +2017,11 @@
             let selectedStage = null;
             let _currentRunningStage = null;
             let _pipelineData = null;  // store last fetched data
+
+            // ─── Commit Navigation State ───
+            let _commitList = [];      // [{hash, short_hash, message, author, date}, ...]
+            let _commitIndex = 0;      // 0 = HEAD (most recent)
+            let _isHistoryMode = false; // true when viewing a past commit
 
 
             // ─── Fetch pipeline data ───
@@ -2720,7 +2828,15 @@
                 _pollTimer = setInterval(pollPipeline, 1_000);
             }
 
+            function stopPolling() {
+                if (_pollTimer) {
+                    clearInterval(_pollTimer);
+                    _pollTimer = null;
+                }
+            }
+
             async function pollPipeline() {
+                if (_isHistoryMode) return; // Skip polling in history mode
                 try {
                     const data = await fetchPipeline();
                     if (data.error) return;
@@ -2901,6 +3017,20 @@
 
                     startPolling();
 
+                    // Load commit list for navigation
+                    try {
+                        const cRes = await fetch('/api/commits?limit=100');
+                        const cData = await cRes.json();
+                        _commitList = cData.commits || [];
+                        if (_commitList.length > 0) {
+                            _commitIndex = 0;
+                            updateCommitNav();
+                            document.getElementById('commit-nav').style.display = 'flex';
+                        }
+                    } catch (e) {
+                        console.warn('Could not load commit list:', e);
+                    }
+
                     setTimeout(() => loading.classList.add('hidden'), 400);
                 } catch (err) {
                     console.error('[BOOT ERROR]', err.message, err.stack);
@@ -3066,6 +3196,9 @@
 
                 // Load file info and history in parallel
                 try {
+                    // In history mode, use the commit hash for file loading
+                    const _historyCommit = _isHistoryMode ? _commitList[_commitIndex]?.hash : null;
+
                     const [infoRes, _] = await Promise.all([
                         fetch(`/api/file/info?path=${encodeURIComponent(filePath)}`),
                         loadFileHistory(filePath),
@@ -3091,6 +3224,17 @@
                         <div class="file-not-found-path">${filePath}</div>
                     </div>`;
                         return;
+                    }
+
+                    // In history mode, auto-jump to the commit version
+                    if (_historyCommit && _versionHistory.length > 0) {
+                        const histIdx = _versionHistory.findIndex(v => v.hash === _historyCommit);
+                        if (histIdx >= 0) {
+                            _versionIndex = histIdx;
+                            updateVersionNav();
+                            await loadVersionContent(_historyCommit);
+                            return;
+                        }
                     }
 
                     switch (info.type) {
@@ -3624,6 +3768,85 @@
                 } catch (e) {
                     console.error('Failed to stop pipeline:', e);
                 }
+            });
+
+            // ─── Commit Navigation Logic ───
+            function updateCommitNav() {
+                if (_commitList.length === 0) return;
+                const commit = _commitList[_commitIndex];
+                const hashEl = document.getElementById('commit-hash');
+                const msgEl = document.getElementById('commit-msg');
+                const badgeEl = document.getElementById('commit-badge');
+                const olderBtn = document.getElementById('commit-older');
+                const newerBtn = document.getElementById('commit-newer');
+
+                hashEl.textContent = commit.short_hash;
+                msgEl.textContent = commit.message;
+                msgEl.title = `${commit.message} — ${commit.author} (${commit.date})`;
+
+                olderBtn.disabled = _commitIndex >= _commitList.length - 1;
+                newerBtn.disabled = _commitIndex <= 0;
+
+                if (_commitIndex === 0) {
+                    badgeEl.textContent = 'HEAD';
+                    badgeEl.className = 'commit-badge-head';
+                } else {
+                    badgeEl.textContent = 'HISTORY';
+                    badgeEl.className = 'commit-badge-history';
+                }
+            }
+
+            async function navigateToCommit(index) {
+                if (index < 0 || index >= _commitList.length) return;
+                _commitIndex = index;
+                updateCommitNav();
+
+                if (index === 0) {
+                    // Return to HEAD — live mode
+                    _isHistoryMode = false;
+                    document.body.classList.remove('history-mode');
+                    const data = await fetchPipeline();
+                    if (!data.error) {
+                        _pipelineData = data;
+                        const elements = buildElements(data);
+                        initGraph(elements);
+                        updateStats(data);
+                        renderNodeList(data);
+                    }
+                    startPolling();
+                } else {
+                    // History mode — load pipeline at this commit
+                    _isHistoryMode = true;
+                    document.body.classList.add('history-mode');
+                    stopPolling();
+
+                    const commit = _commitList[index];
+                    try {
+                        const res = await fetch(`/api/pipeline/at-commit?commit=${commit.hash}`);
+                        const data = await res.json();
+                        if (data.error) {
+                            showToast(`Error: ${data.error}`, 'error');
+                            setTimeout(hideToast, 4000);
+                            return;
+                        }
+                        _pipelineData = data;
+                        const elements = buildElements(data);
+                        initGraph(elements);
+                        updateStats(data);
+                        renderNodeList(data);
+                    } catch (e) {
+                        showToast(`Failed to load commit: ${e.message}`, 'error');
+                        setTimeout(hideToast, 4000);
+                    }
+                }
+            }
+
+            document.getElementById('commit-older').addEventListener('click', () => {
+                navigateToCommit(_commitIndex + 1);
+            });
+
+            document.getElementById('commit-newer').addEventListener('click', () => {
+                navigateToCommit(_commitIndex - 1);
             });
 
             boot();

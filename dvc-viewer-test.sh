@@ -30,7 +30,36 @@ git init -q
 dvc init -q
 git commit -m "Initialize DVC" --allow-empty
 
-# Copy fixture files
+# ── Commit 1: Minimal pipeline (prepare only) ──
+cat > dvc.yaml <<'EOF'
+stages:
+  prepare:
+    cmd: echo "raw data" > data.txt
+    outs:
+      - data.txt
+EOF
+git add .
+git commit -m "Add minimal prepare stage"
+
+# ── Commit 2: Add process stage ──
+cat > dvc.yaml <<'EOF'
+stages:
+  prepare:
+    cmd: echo "raw data" > data.txt
+    outs:
+      - data.txt
+
+  process:
+    cmd: cat data.txt > processed.txt
+    deps:
+      - data.txt
+    outs:
+      - processed.txt
+EOF
+git add .
+git commit -m "Add process stage"
+
+# ── Commit 3: Full fixture pipeline ──
 cp -rv "$FIXTURE_PATH/"* .
 
 # Ensure all mentioned script paths exist even if empty
@@ -39,10 +68,9 @@ if [ -f "dvc.yaml" ]; then
     grep -oE "[a-zA-Z0-9_/]+\.py" dvc.yaml | sort -u | xargs touch 2>/dev/null || true
 fi
 
-# Add and commit
 git add .
-git commit -m "Add pipeline from fixture $FIXTURE_NAME"
-echo "✅ Project initialized with fixture '$FIXTURE_NAME'."
+git commit -m "Full pipeline from fixture $FIXTURE_NAME"
+echo "✅ Project initialized with 3 commits for testing navigation."
 
 # Re-install dvc-viewer from source
 echo "📦 Installing dvc-viewer in editable mode..."
