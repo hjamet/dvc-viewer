@@ -1056,6 +1056,16 @@
             transition: all 0.3s ease;
         }
 
+        .exec-toast.running {
+            cursor: pointer;
+        }
+
+        .exec-toast.running:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent-primary);
+            background: var(--bg-card-elevated);
+        }
+
         .exec-toast.active {
             display: flex;
         }
@@ -1153,6 +1163,119 @@
             color: var(--text-muted);
             font-style: italic;
             padding: 8px 0;
+        }
+
+        /* ─── Sidebar Node List ─── */
+        .sidebar-node-list-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .sidebar-node-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .sidebar-node-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+
+        .sidebar-node-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateX(4px);
+        }
+
+        .sidebar-node-item .node-name {
+            flex: 1;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sidebar-node-item .node-status-badge {
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 6px;
+            letter-spacing: 0.02em;
+        }
+
+        .sidebar-node-item .node-status-badge.valid {
+            background: rgba(52, 211, 153, 0.15);
+            color: #34d399;
+        }
+
+        .sidebar-node-item .node-status-badge.needs_rerun {
+            background: rgba(251, 191, 36, 0.15);
+            color: #fbbf24;
+        }
+
+        .sidebar-node-item .node-status-badge.never_run {
+            background: rgba(156, 163, 175, 0.15);
+            color: #9ca3af;
+        }
+
+        .sidebar-node-item .node-status-badge.running {
+            background: rgba(129, 140, 248, 0.15);
+            color: #818cf8;
+            animation: pulse-opacity 1.5s ease-in-out infinite;
+        }
+
+        .sidebar-node-item .node-status-badge.failed {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+
+        @keyframes pulse-opacity {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.6;
+            }
+        }
+
+        .sidebar-list-header {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-list-header::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.05);
         }
 
         /* ─── Error state on nodes ─── */
@@ -1604,9 +1727,11 @@
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-resize-handle" id="sidebar-resize"></div>
             <div class="sidebar-empty" id="sidebar-empty">
-                <div class="sidebar-empty-icon">🎯</div>
-                <div class="sidebar-empty-text">
-                    Click on a node to inspect<br>its details
+                <div class="sidebar-node-list-container" id="sidebar-node-list-container">
+                    <div class="sidebar-list-header">Pipeline stages</div>
+                    <ul class="sidebar-node-list" id="sidebar-node-list">
+                        <!-- Populated by JS -->
+                    </ul>
                 </div>
             </div>
             <div id="sidebar-detail" style="display: none;">
@@ -1691,6 +1816,8 @@
 
             let cy = null;
             let selectedStage = null;
+            let _currentRunningStage = null;
+            let _pipelineData = null;  // store last fetched data
 
 
             // ─── Fetch pipeline data ───
@@ -2396,6 +2523,45 @@
             function clearDetail() {
                 document.getElementById('sidebar-empty').style.display = 'flex';
                 document.getElementById('sidebar-detail').style.display = 'none';
+                if (_pipelineData) renderNodeList(_pipelineData);
+            }
+
+            function renderNodeList(data) {
+                const list = document.getElementById('sidebar-node-list');
+                const scrollPos = list.scrollTop;
+                list.innerHTML = '';
+
+                const order = data.execution_order || data.nodes.map(n => n.id);
+                for (const nodeName of order) {
+                    const node = data.nodes.find(n => n.id === nodeName);
+                    if (!node) continue;
+
+                    const li = document.createElement('li');
+                    li.className = 'sidebar-node-item';
+                    li.innerHTML = `
+                        <span class="node-name">${nodeName}</span>
+                        <span class="node-status-badge ${node.state}">${STATE_LABELS[node.state]}</span>
+                    `;
+                    li.addEventListener('click', () => {
+                        const cyNode = cy.getElementById(nodeName);
+                        if (cyNode.length) {
+                            selectedStage = nodeName;
+                            showDetail(cyNode.data());
+                            highlightNeighborhood(cyNode);
+                            removeNodeBadge(nodeName);
+
+                            // Center and zoom
+                            cy.animate({
+                                center: { eles: cyNode },
+                                zoom: 1.5,
+                                duration: 500,
+                                easing: 'ease-out-cubic'
+                            });
+                        }
+                    });
+                    list.appendChild(li);
+                }
+                list.scrollTop = scrollPos;
             }
 
             // ─── Stats bar ───
@@ -2431,6 +2597,7 @@
                 try {
                     const data = await fetchPipeline();
                     if (data.error) return;
+                    _pipelineData = data;
 
                     const nowRunning = data.is_running || false;
                     const nowStage = data.running_stage || null;
@@ -2569,6 +2736,9 @@
                                 badge.className = 'state-badge ' + updatedNode.state;
                             }
                         }
+                    } else {
+                        // Update node list if no stage selected
+                        renderNodeList(data);
                     }
                 } catch (err) {
                     // Silently ignore poll errors
@@ -2584,8 +2754,10 @@
                     if (data.error) throw new Error(data.error);
 
                     const elements = buildElements(data);
+                    _pipelineData = data;
                     initGraph(elements);
                     updateStats(data);
+                    renderNodeList(data);
 
                     // Handle case where a run is already in progress at boot
                     if (data.is_running && data.running_stage) {
@@ -2972,10 +3144,34 @@
                 const spinner = document.getElementById('toast-spinner');
                 const icon = document.getElementById('toast-icon');
                 document.getElementById('toast-text').textContent = text;
-                toast.className = 'exec-toast active' + (type !== 'running' ? ' ' + type : '');
+
+                let cls = 'exec-toast active';
+                if (type !== 'running') cls += ' ' + type;
+                else cls += ' running';
+                toast.className = cls;
+
                 spinner.style.display = type === 'running' ? 'block' : 'none';
                 icon.style.display = type !== 'running' ? 'inline' : 'none';
                 icon.textContent = type === 'success' ? '✅' : type === 'error' ? '❌' : '';
+
+                // Clicking the toast zooms to current running stage
+                toast.onclick = () => {
+                    if (type === 'running' && _currentRunningStage && cy) {
+                        const node = cy.getElementById(_currentRunningStage);
+                        if (node.length) {
+                            selectedStage = _currentRunningStage;
+                            showDetail(node.data());
+                            highlightNeighborhood(node);
+                            removeNodeBadge(_currentRunningStage);
+                            cy.animate({
+                                center: { eles: node },
+                                zoom: 1.5,
+                                duration: 600,
+                                easing: 'ease-out-cubic'
+                            });
+                        }
+                    }
+                };
             }
 
             function hideToast() {
@@ -3187,6 +3383,7 @@
                                     const t = _stageTimers[data.stage];
                                     if (t && !t.duration) {
                                         const elapsed = formatElapsed(Date.now() - t.start);
+                                        _currentRunningStage = data.stage;
                                         document.getElementById('toast-text').textContent = `Running: ${data.stage} (${elapsed}…)`;
                                     }
                                 }, 1000);

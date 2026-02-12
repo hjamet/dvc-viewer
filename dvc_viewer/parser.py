@@ -787,9 +787,33 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
             }
         )
 
+    # Compute topological execution order (Kahn's algorithm)
+    # 1. Build adjacency list and in-degrees
+    in_degree = {n["id"]: 0 for n in nodes}
+    adj = {n["id"]: [] for n in nodes}
+    for e in edges:
+        # nodes and edges are already filtered for _HIDDEN_STAGES
+        if e["source"] in adj and e["target"] in adj:
+            adj[e["source"]].append(e["target"])
+            in_degree[e["target"]] += 1
+            
+    # 2. Initial queue: all nodes with in-degree 0 (sorted for stability)
+    queue = sorted([node_id for node_id, deg in in_degree.items() if deg == 0])
+    execution_order = []
+    
+    # 3. Process
+    while queue:
+        u = queue.pop(0)
+        execution_order.append(u)
+        for v in sorted(adj[u]):  # sort children for stable ties
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                queue.append(v)
+
     return {
         "nodes": nodes,
         "edges": edges,
+        "execution_order": execution_order,
         "is_running": pipeline.is_running,
         "running_stage": pipeline.running_stage,
         "running_pid": pipeline.running_pid,

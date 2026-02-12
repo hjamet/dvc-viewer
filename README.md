@@ -9,6 +9,8 @@
 
 - **Interactive DAG** — Explore your pipeline as a navigable directed graph
 - **Stage states** — See at a glance which stages are ✅ valid, 🔄 need rerun, or ⬜ never run
+- **Global Stage List** — View all stages and their status in a sorted sidebar list when nothing is selected
+- **One-click Navigation** — Click the running notification to immediately zoom and center on the active stage
 - **Click-to-inspect** — Click any node to view its command, dependencies, and outputs
 - **Dark theme** — Sleek glassmorphism UI with smooth animations
 - **Zero config** — Just run `dvc-viewer` inside any DVC project
