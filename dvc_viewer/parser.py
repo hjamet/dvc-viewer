@@ -65,6 +65,7 @@ class Stage:
     always_changed: bool = False
     hydra_config: str | None = None  # resolved relative path to config YAML
     frozen: bool = False
+    definition_order: int = 0
 
 
 
@@ -211,7 +212,7 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
     stages_data = data.get("stages", {})
     stages: dict[str, Stage] = {}
 
-    for name, definition in stages_data.items():
+    for i, (name, definition) in enumerate(stages_data.items()):
         if not isinstance(definition, dict):
             continue
 
@@ -220,7 +221,7 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             do_block = definition["do"]
             
             is_frozen = definition.get("frozen", False)
-            expanded_stages = _expand_foreach(name, items, do_block, project_dir, is_frozen)
+            expanded_stages = _expand_foreach(name, items, do_block, project_dir, is_frozen, definition_order_start=i * 1000)
             stages.update(expanded_stages)
             continue
 
@@ -236,13 +237,14 @@ def parse_dvc_yaml(project_dir: str | Path) -> dict[str, Stage]:
             always_changed=definition.get("always_changed", False),
             hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
             frozen=definition.get("frozen", False),
+            definition_order=i,
         )
         stages[name] = stage
 
     return stages
 
 
-def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str | Path, parent_frozen: bool = False) -> dict[str, Stage]:
+def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str | Path, parent_frozen: bool = False, definition_order_start: int = 0) -> dict[str, Stage]:
     """Expand a foreach block into multiple individual stages."""
     expanded: dict[str, Stage] = {}
     
@@ -256,7 +258,7 @@ def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str
         # Fallback for unexpected data types
         return {}
 
-    for key, item in iterable:
+    for i, (key, item) in enumerate(iterable):
         # Generate stage name (e.g. stage@item or stage@key)
         suffix = str(key if key is not None else item)
         name = f"{base_name}@{suffix}"
@@ -286,6 +288,7 @@ def _expand_foreach(base_name: str, items: Any, do_block: dict, project_dir: str
             always_changed=do_block.get("always_changed", False),
             hydra_config=_extract_hydra_config(cmd, Path(project_dir)),
             frozen=do_block.get("frozen", parent_frozen),
+            definition_order=definition_order_start + i,
         )
         expanded[name] = stage
         
@@ -797,18 +800,25 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
             adj[e["source"]].append(e["target"])
             in_degree[e["target"]] += 1
             
-    # 2. Initial queue: all nodes with in-degree 0 (sorted for stability)
-    queue = sorted([node_id for node_id, deg in in_degree.items() if deg == 0])
+    # 2. Initial queue: all nodes with in-degree 0 (sorted by definition order for stability)
+    def get_order(node_id):
+        return pipeline.stages[node_id].definition_order if node_id in pipeline.stages else 999999
+
+    queue = sorted([node_id for node_id, deg in in_degree.items() if deg == 0], key=get_order)
     execution_order = []
     
     # 3. Process
     while queue:
         u = queue.pop(0)
         execution_order.append(u)
-        for v in sorted(adj[u]):  # sort children for stable ties
+        # Sort children by definition order for stable ties
+        children = sorted(adj[u], key=get_order)
+        for v in children:
             in_degree[v] -= 1
             if in_degree[v] == 0:
                 queue.append(v)
+                # Re-sort queue to maintain definition order priority for independent branches
+                queue.sort(key=get_order)
 
     return {
         "nodes": nodes,
