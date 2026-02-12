@@ -18,11 +18,18 @@ echo ""
 if [ -d "$INSTALL_DIR" ]; then
     echo "  📦 Updating existing installation…"
     
+    # Try to determine the default branch dynamically
+    cd "$INSTALL_DIR"
+    git fetch --quiet origin
+    DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p' || echo "main")
+    
     # Attempt a forceful reset to remote state.
-    # If this fails (e.g. corrupted repo, not a git repo), we delete and re-clone.
-    if ! (cd "$INSTALL_DIR" && git fetch --quiet origin && git reset --hard origin/main --quiet); then
+    if ! git reset --hard "origin/$DEFAULT_BRANCH" --quiet; then
         echo "  ⚠️  Update failed, re-installing from scratch…"
         rm -rf "$INSTALL_DIR"
+    else
+        # Remove untracked files to ensure we match remote exactly
+        git clean -fd --quiet
     fi
 fi
 
@@ -32,16 +39,26 @@ if [ ! -d "$INSTALL_DIR" ]; then
 fi
 cd "$INSTALL_DIR"
 
-# ─── 2. Create venv ───
-if [ ! -d "$INSTALL_DIR/.venv" ]; then
+# ─── 2. Create or validate venv ───
+RECREATE_VENV=false
+if [ -d ".venv" ]; then
+    # Check if venv is healthy (can run python)
+    if ! .venv/bin/python --version >/dev/null 2>&1; then
+        echo "  ⚠️  Virtual environment is broken, recreating…"
+        RECREATE_VENV=true
+    fi
+fi
+
+if [ ! -d ".venv" ] || [ "$RECREATE_VENV" = true ]; then
+    rm -rf ".venv"
     echo "  🐍 Creating Python virtual environment…"
-    python3 -m venv "$INSTALL_DIR/.venv"
+    python3 -m venv .venv
 fi
 
 # ─── 3. Install package ───
 echo "  📥 Installing dependencies…"
-"$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install --quiet -e "$INSTALL_DIR"
+.venv/bin/pip install --quiet --upgrade pip
+.venv/bin/pip install --quiet --upgrade --upgrade-strategy eager -e .
 
 # ─── 4. Symlink binary ───
 mkdir -p "$BIN_DIR"
