@@ -215,7 +215,7 @@
         .sidebar {
             width: 380px;
             min-width: 260px;
-            max-width: 60vw;
+            max-width: 80vw;
             background: var(--bg-card);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
@@ -260,7 +260,9 @@
             margin-bottom: 8px;
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 10px;
+            word-break: break-all;
         }
 
         .state-badge {
@@ -1204,12 +1206,21 @@
             transform: translateX(4px);
         }
 
+        .sidebar-node-item.next-up {
+            border-color: #a855f7;
+            background: rgba(168, 85, 247, 0.08);
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.1);
+        }
+
+        .sidebar-node-item.next-up:hover {
+            background: rgba(168, 85, 247, 0.12);
+        }
+
         .sidebar-node-item .node-name {
             flex: 1;
             font-family: 'JetBrains Mono', monospace;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            white-space: normal;
+            word-break: break-all;
         }
 
         .sidebar-node-item .node-status-badge {
@@ -2532,14 +2543,30 @@
                 list.innerHTML = '';
 
                 const order = data.execution_order || data.nodes.map(n => n.id);
+
+                // Identify the "next up" stage: the first non-valid stage in topological order
+                let nextUpId = data.is_running ? data.running_stage : null;
+                if (!nextUpId) {
+                    for (const nodeName of order) {
+                        const node = data.nodes.find(n => n.id === nodeName);
+                        if (node && node.state !== 'valid' && node.state !== 'running') {
+                            nextUpId = nodeName;
+                            break;
+                        }
+                    }
+                }
                 for (const nodeName of order) {
                     const node = data.nodes.find(n => n.id === nodeName);
                     if (!node) continue;
 
                     const li = document.createElement('li');
-                    li.className = 'sidebar-node-item';
+                    const isNext = nodeName === nextUpId;
+                    li.className = 'sidebar-node-item' + (isNext ? ' next-up' : '');
+
+                    const nextIcon = isNext ? (data.is_running && nodeName === data.running_stage ? '<span style="margin-right:4px">⚡</span>' : '<span style="margin-right:4px">⏳</span>') : '';
+
                     li.innerHTML = `
-                        <span class="node-name">${nodeName}</span>
+                        <span class="node-name">${nextIcon}${nodeName}</span>
                         <span class="node-status-badge ${node.state}">${STATE_LABELS[node.state]}</span>
                     `;
                     li.addEventListener('click', () => {
@@ -3516,7 +3543,7 @@
 
                     function onMove(e) {
                         const delta = startX - e.clientX;
-                        const newW = Math.min(Math.max(startW + delta, 260), window.innerWidth * 0.6);
+                        const newW = Math.min(Math.max(startW + delta, 260), window.innerWidth * 0.8);
                         sidebar.style.width = newW + 'px';
                     }
 
