@@ -15,7 +15,8 @@ import yaml
 from pathlib import Path
 from typing import Any
 
-from .hasher import find_transitive_dependencies, compute_aggregate_hash
+import json
+from .hasher import find_transitive_dependencies, compute_aggregate_hash, compute_per_file_hashes, find_import_chain
 
 
 def _find_project_python(project_dir: Path) -> str:
@@ -76,6 +77,77 @@ def _resolve_foreach_items(items: Any, project_dir: Path) -> Any:
     return items
 
 
+def _update_stage_hash(
+    name: str, 
+    script_path: Path, 
+    project_dir: Path, 
+    hash_dir: Path
+) -> str:
+    """Compute hash, compare with manifest, print diagnostic if changed, and return aggregate hash."""
+    deps, import_graph = find_transitive_dependencies(script_path, project_dir)
+    code_hash = compute_aggregate_hash(deps, project_dir)
+    file_hashes = compute_per_file_hashes(deps, project_root=project_dir)
+    
+    # Manifest path
+    manifest_path = hash_dir / f"{name}.manifest.json"
+    old_manifest = {}
+    if manifest_path.exists():
+        try:
+            old_manifest = json.loads(manifest_path.read_text())
+        except Exception:
+            pass
+    
+    # Check for changes
+    if old_manifest and old_manifest.get("aggregate_hash") != code_hash:
+        old_hashes = old_manifest.get("file_hashes", {})
+        modified_files = []
+        for f, h in file_hashes.items():
+            if f not in old_hashes:
+                modified_files.append((f, "added"))
+            elif old_hashes[f] != h:
+                modified_files.append((f, "modified"))
+        
+        for f in old_hashes:
+            if f not in file_hashes:
+                modified_files.append((f, "deleted"))
+        
+        if modified_files:
+            # Color codes if terminal supports it
+            YELLOW = "\033[93m"
+            BOLD = "\033[1m"
+            RESET = "\033[0m"
+            DIM = "\033[2m"
+            
+            print(f"   {YELLOW}⚠️  Stage '{name}' invalidated by code change:{RESET}")
+            
+            # Simple string representation of graph for the chain finder
+            str_graph = {str(k.relative_to(project_dir)): [str(v.relative_to(project_dir)) for v in vs] 
+                         for k, vs in import_graph.items()}
+            entry_rel = str(script_path.relative_to(project_dir))
+            
+            for f, reason in modified_files[:3]: # Limit to 3 files to avoid spam
+                print(f"      {BOLD}{f}{RESET} ({reason})")
+                chain = find_import_chain(str_graph, f, entry_rel)
+                if chain and len(chain) > 1:
+                    for i, link in enumerate(chain[1:]):
+                        indent = " " * (8 + i * 2)
+                        print(f"{DIM}{indent}→ {link}{RESET}")
+            
+            if len(modified_files) > 3:
+                print(f"      {DIM}... and {len(modified_files) - 3} more files.{RESET}")
+
+    # Write manifest
+    new_manifest = {
+        "aggregate_hash": code_hash,
+        "file_hashes": file_hashes,
+        "import_graph": {str(k.relative_to(project_dir)): [str(v.relative_to(project_dir)) for v in vs] 
+                         for k, vs in import_graph.items()}
+    }
+    manifest_path.write_text(json.dumps(new_manifest, indent=2))
+    
+    return code_hash
+
+
 def update_dvc_yaml(project_dir: Path) -> None:
     """
     Main logic:
@@ -114,18 +186,14 @@ def update_dvc_yaml(project_dir: Path) -> None:
     }
     
     # Check if we need to add/update the hasher stage
-    # If it's missing or different, update it
-    # We place it first logic-wise, but dict order depends on insertion
     if hasher_stage_name not in stages:
         print(f"   ➕ Adding '{hasher_stage_name}' stage")
-        # Put it at the start if possible (create new dict)
         new_stages = {hasher_stage_name: expected_hasher}
         new_stages.update(stages)
         stages = new_stages
         config["stages"] = stages
         modified = True
     else:
-        # Update definition if needed
         if stages[hasher_stage_name] != expected_hasher:
             stages[hasher_stage_name] = expected_hasher
             modified = True
@@ -141,27 +209,13 @@ def update_dvc_yaml(project_dir: Path) -> None:
             items = _resolve_foreach_items(items, project_dir)
             do_block = stage["do"]
             
-            # We want to inject the dependency into the do_block
-            # so that ALL expanded stages depend on their respective hash
-            # DVC documentation says we can use ${item} in do_block.deps
-            
-            # But first, we need to know what to hash.
-            # Usually it's the script in the 'cmd'.
             cmd = do_block.get("cmd", "")
             script_path = _find_script_in_cmd(cmd, project_dir)
             
             if script_path:
-                # Compute hash (transitive)
-                deps = find_transitive_dependencies(script_path, project_dir)
-                code_hash = compute_aggregate_hash(deps, project_dir)
-                
-                # Now we need to decide how to name the hash files.
-                # If we use stage@${item}.hash, DVC will expand it.
-                # But we need to write these files during the 'dvc-viewer hash' run.
-                # 'dvc-viewer hash' (which calls this function) runs BEFORE the stages.
-                
-                # If we are here, we are scanning the dvc.yaml.
-                # We should expand the items to write the hash files.
+                # We use the generic stage name for hashing foreach scripts
+                # because they usually all point to the SAME script.
+                code_hash = _update_stage_hash(name, script_path, project_dir, hash_dir)
                 
                 iterable = []
                 if isinstance(items, list):
@@ -172,14 +226,9 @@ def update_dvc_yaml(project_dir: Path) -> None:
                 for key, item in iterable:
                     suffix = str(key if key is not None else item)
                     expanded_name = f"{name}@{suffix}"
-                    
-                    hash_file_name = f"{expanded_name}.hash"
-                    hash_file_path = hash_dir / hash_file_name
-                    
-                    # Update hash file
+                    hash_file_path = hash_dir / f"{expanded_name}.hash"
                     hash_file_path.write_text(code_hash)
                 
-                # Use ${key} for dicts and ${item} for lists to match DVC's stage naming suffix
                 var_name = "key" if isinstance(items, dict) else "item"
                 hash_dep = f".dvc-viewer/hashes/{name}@${{{var_name}}}.hash"
                 
@@ -199,28 +248,19 @@ def update_dvc_yaml(project_dir: Path) -> None:
         if not script_path:
             continue
             
-        # Compute hash
-        deps = find_transitive_dependencies(script_path, project_dir)
-        code_hash = compute_aggregate_hash(deps, project_dir)
+        code_hash = _update_stage_hash(name, script_path, project_dir, hash_dir)
         
         # Write hash file
         hash_file_name = f"{name}.hash"
         hash_file_path = hash_dir / hash_file_name
-        
-        # Check if hash changed
-        old_hash = hash_file_path.read_text().strip() if hash_file_path.exists() else None
-        if old_hash != code_hash:
-            hash_file_path.write_text(code_hash)
+        hash_file_path.write_text(code_hash)
         
         # Ensure dependency exists in dvc.yaml
         hash_dep = f".dvc-viewer/hashes/{hash_file_name}"
         current_deps = stage.get("deps", [])
-        
-        # Handle if deps is None
         if current_deps is None:
             current_deps = []
             
-        # Check if hash_dep is already present
         has_dep = False
         for dep in current_deps:
             if isinstance(dep, str) and dep == hash_dep:

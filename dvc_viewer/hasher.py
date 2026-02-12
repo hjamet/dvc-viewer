@@ -188,10 +188,16 @@ def extract_sys_path_additions(path: Path, project_root: Path) -> list[Path]:
     return list(set(new_roots))
 
 
-def find_transitive_dependencies(entry_path: Path, project_root: Path) -> set[Path]:
-    """Recursive dependency discovery for Python scripts."""
+def find_transitive_dependencies(entry_path: Path, project_root: Path) -> tuple[set[Path], dict[Path, set[Path]]]:
+    """
+    Recursive dependency discovery for Python scripts.
+    Returns:
+        all_deps: set of all discovered file paths
+        import_graph: dict mapping importer -> set of imported files
+    """
     entry_path = entry_path.resolve()
     all_deps = {entry_path}
+    import_graph: dict[Path, set[Path]] = {}
     to_visit = [entry_path]
     visited_in_this_run = {entry_path}
     
@@ -265,6 +271,8 @@ def find_transitive_dependencies(entry_path: Path, project_root: Path) -> set[Pa
             }
             _DEPENDENCY_CACHE[current_file] = immediate_deps
 
+        import_graph[current_file] = immediate_deps
+
         # Add new deps to visit
         for p in immediate_deps:
             if p not in visited_in_this_run:
@@ -273,7 +281,52 @@ def find_transitive_dependencies(entry_path: Path, project_root: Path) -> set[Pa
                 if p.suffix == ".py":
                     to_visit.append(p)
                     
-    return all_deps
+    return all_deps, import_graph
+
+
+def compute_per_file_hashes(file_paths: set[Path], project_root: Path) -> dict[str, str]:
+    """Compute mapping of relative path to content hash."""
+    hashes = {}
+    for path in file_paths:
+        try:
+            rel_path = str(path.relative_to(project_root))
+        except ValueError:
+            rel_path = str(path)
+        
+        try:
+            h = hashlib.sha256()
+            h.update(path.read_bytes())
+            hashes[rel_path] = h.hexdigest()
+        except Exception:
+            pass
+    return hashes
+
+
+def find_import_chain(import_graph: dict[str, list[str]], target_file: str, entry_point: str) -> list[str] | None:
+    """Find the import chain from target_file to entry_point using BFS."""
+    if target_file == entry_point:
+        return [entry_point]
+    
+    # BFS to find path from entry_point to target_file
+    queue = [[entry_point]]
+    visited = {entry_point}
+    
+    while queue:
+        path = queue.pop(0)
+        node = path[-1]
+        
+        if node == target_file:
+            # We want modified_file -> ... -> entry_point
+            return list(reversed(path))
+            
+        for neighbor in import_graph.get(node, []):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                new_path = list(path)
+                new_path.append(neighbor)
+                queue.append(new_path)
+    
+    return None
 
 
 def compute_aggregate_hash(file_paths: set[Path], project_root: Path) -> str:
