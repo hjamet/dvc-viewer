@@ -1047,9 +1047,22 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
             adj[e["source"]].append(e["target"])
             in_degree[e["target"]] += 1
             
-    # 2. Initial queue: all nodes with in-degree 0 (sorted by definition order for stability)
+    # 2. Initial queue: all nodes with in-degree 0 (sorted by execution priority and definition order)
     def get_order(node_id):
-        return pipeline.stages[node_id].definition_order if node_id in pipeline.stages else 999999
+        stage = pipeline.stages.get(node_id)
+        if not stage:
+            return (1, 999999)
+        
+        # Priority: dirty states (0) before valid/frozen states (1)
+        # This ensures that independent branches show dirty stages before clean ones
+        state_priority = {
+            "running": 0,
+            "failed": 0,
+            "needs_rerun": 0,
+            "never_run": 0,
+            "valid": 1,
+        }
+        return (state_priority.get(stage.state, 1), stage.definition_order)
 
     queue = sorted([node_id for node_id, deg in in_degree.items() if deg == 0], key=get_order)
     execution_order = []
@@ -1058,13 +1071,13 @@ def pipeline_to_dict(pipeline: Pipeline) -> dict[str, Any]:
     while queue:
         u = queue.pop(0)
         execution_order.append(u)
-        # Sort children by definition order for stable ties
+        # Sort children by execution priority and definition order for stable ties
         children = sorted(adj[u], key=get_order)
         for v in children:
             in_degree[v] -= 1
             if in_degree[v] == 0:
                 queue.append(v)
-                # Re-sort queue to maintain definition order priority for independent branches
+                # Re-sort queue to maintain priority for independent branches
                 queue.sort(key=get_order)
 
     return {

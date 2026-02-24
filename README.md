@@ -12,7 +12,7 @@
 - **Precise Dependency Coloring** — 🎯 When a stage needs rerun, only the specific dependency that changed is highlighted yellow, not all dependencies. Missing files are red, unchanged files stay green.
 - **Invalidation Diagnostic** — ⚠️ When a code change invalidates a stage, the console shows exactly which file changed and the **transitive import chain** responsible for the reload.
 - **Search & Filter** — Instantly find and filter stages by name or status (valid, changed, frozen, etc.).
-- **Global Stage List** — View all stages in the sidebar, sorted by official DVC execution order.
+- **Global Stage List** — View all stages in the sidebar, sorted by topological order with stable status-based prioritization (dirty stages first).
 - **Frozen Status** — Visual indicators (❄️) for frozen stages.
 - **One-click Navigation** — Click notifications or list items to zoom and center on any stage.
 - **Smart Code Hashing** — 🧠 Only executable code changes trigger reruns. Comments, docstrings, and whitespace are ignored.
