@@ -86,6 +86,16 @@ EOF
 
 **Error handling** — if the hook fails, a warning is printed but `dvc-viewer hash` always succeeds. Hooks never block the pipeline.
 
+## 📚 Documentation Index
+
+| Titre | Description |
+|-------|-------------|
+| [Index Tasks](docs/index_tasks.md) | Tâches planifiées et en cours |
+
+## 🛣️ Roadmap
+
+- [ ] [Optimisation Hashing AST](docs/tasks/ast-hashing-optimization.md) — Ne hasher que le code exécutable (Phase 1: AST normalisé, Phase 2: symbol-level via `symtable`)
+
 ## 📄 License
 
 MIT
