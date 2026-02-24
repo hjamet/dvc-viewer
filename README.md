@@ -15,6 +15,8 @@
 - **Global Stage List** — View all stages in the sidebar, sorted by official DVC execution order.
 - **Frozen Status** — Visual indicators (❄️) for frozen stages.
 - **One-click Navigation** — Click notifications or list items to zoom and center on any stage.
+- **Smart Code Hashing** — 🧠 Only executable code changes trigger reruns. Comments, docstrings, and whitespace are ignored.
+- **Symbol-Level Invalidation** — 🎯 If a script imports `foo` from `utils.py`, changing `bar` in `utils.py` will NOT invalidate the stage.
 - **Click-to-inspect** — Click any node to view its command, dependencies, and outputs
 - **Dark theme** — Sleek glassmorphism UI with smooth animations
 - **Zero config** — Just run `dvc-viewer` inside any DVC project
@@ -94,7 +96,7 @@ EOF
 
 ## 🛣️ Roadmap
 
-- [ ] [Optimisation Hashing AST](docs/tasks/ast-hashing-optimization.md) — Ne hasher que le code exécutable (Phase 1: AST normalisé, Phase 2: symbol-level via `symtable`)
+- [ ] Support pour les pipelines multi-projets
 
 ## 📄 License
 

@@ -4,6 +4,7 @@ import shutil
 import textwrap
 from pathlib import Path
 from dvc_viewer.updater import update_dvc_yaml
+from dvc_viewer.hasher import clear_caches
 
 def test_hash_invalidation_diagnostic(tmp_path):
     project_dir = tmp_path / "project"
@@ -29,6 +30,7 @@ def test_hash_invalidation_diagnostic(tmp_path):
     (project_dir / "utils.py").write_text("def tool(): return 43")
     
     print("\n--- Second run (should show diagnostic) ---")
+    clear_caches()
     # Capture output
     import io
     from contextlib import redirect_stdout

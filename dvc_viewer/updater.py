@@ -84,9 +84,9 @@ def _update_stage_hash(
     hash_dir: Path
 ) -> str:
     """Compute hash, compare with manifest, print diagnostic if changed, and return aggregate hash."""
-    deps, import_graph = find_transitive_dependencies(script_path, project_dir)
-    code_hash = compute_aggregate_hash(deps, project_dir)
-    file_hashes = compute_per_file_hashes(deps, project_root=project_dir)
+    deps, import_graph, import_names = find_transitive_dependencies(script_path, project_dir)
+    file_hashes = compute_per_file_hashes(deps, project_root=project_dir, import_names=import_names, entry_point=script_path)
+    code_hash = compute_aggregate_hash(deps, project_dir, import_names=import_names, entry_point=script_path, precomputed_hashes=file_hashes)
     
     # Manifest path
     manifest_path = hash_dir / f"{name}.manifest.json"

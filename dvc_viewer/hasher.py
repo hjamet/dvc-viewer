@@ -8,12 +8,14 @@ and computes an aggregate hash. Adapted from the CLIMB Transitive Code Hasher.
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import logging
 import os
+import symtable
 import sys
 from pathlib import Path
-from typing import Set, Tuple
+from typing import Set, Tuple, Dict, Any
 
 # Setup logging
 logger = logging.getLogger("dvc_viewer.hasher")
@@ -113,6 +115,12 @@ _DEPENDENCY_CACHE: dict[Path, set[Path]] = {}
 _AST_CACHE: dict[Path, ast.AST] = {}
 
 
+def clear_caches():
+    """Clear the internal AST and dependency caches."""
+    _DEPENDENCY_CACHE.clear()
+    _AST_CACHE.clear()
+
+
 def get_ast(path: Path) -> ast.AST:
     """Read and parse AST with caching."""
     if path not in _AST_CACHE:
@@ -124,6 +132,136 @@ def get_ast(path: Path) -> ast.AST:
             logger.warning(f"Failed to parse {path}: {e}")
             _AST_CACHE[path] = ast.Module(body=[], type_ignores=[])
     return _AST_CACHE[path]
+
+
+def _strip_docstrings(tree: ast.AST) -> None:
+    """Recursively remove docstrings from a module, class, or function."""
+    if hasattr(tree, "body") and isinstance(tree.body, list):
+        # Docstring is an Expr node containing a Constant string as the first element
+        if (tree.body and isinstance(tree.body[0], ast.Expr) and 
+            isinstance(tree.body[0].value, (ast.Str, ast.Constant))):
+            val = getattr(tree.body[0].value, "s", None) if isinstance(tree.body[0].value, ast.Str) else getattr(tree.body[0].value, "value", None)
+            if isinstance(val, str):
+                tree.body.pop(0)
+        
+        # Recurse into body elements
+        for node in tree.body:
+            _strip_docstrings(node)
+
+
+def _compute_python_hash(path: Path) -> str:
+    """Compute a hash of the executable code in a Python file (ignores docstrings/comments)."""
+    try:
+        # Use existing cached AST
+        tree = get_ast(path)
+        # Deepcopy to avoid mutating the cached AST when stripping docstrings
+        tree_copy = copy.deepcopy(tree)
+        _strip_docstrings(tree_copy)
+        # ast.dump(include_attributes=False) eliminates line numbers/whitespace/comments
+        # while keeping the normalized structure of the code.
+        normalized = ast.dump(tree_copy, include_attributes=False)
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    except Exception as e:
+        logger.warning(f"AST hashing failed for {path}, falling back to raw bytes: {e}")
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return ""
+
+
+def _compute_file_hash(path: Path, symbols: set[str] | None = None) -> str:
+    """
+    Computes hash using AST for .py files, and read_bytes for others.
+    If symbols is provided, only hash those symbols and their closure.
+    """
+    if path.suffix == ".py":
+        if symbols is not None:
+            return _compute_symbol_level_hash(path, symbols)
+        return _compute_python_hash(path)
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception as e:
+        logger.warning(f"Failed to read {path}: {e}")
+        return ""
+
+
+def _resolve_symbol_closure(path: Path, symbol_names: set[str]) -> set[str]:
+    """Find all internal globals/functions referenced by the given symbols using symtable."""
+    try:
+        code = path.read_text(encoding="utf-8")
+        table = symtable.symtable(code, str(path), "exec")
+    except Exception:
+        return symbol_names
+
+    closure = set(symbol_names)
+    to_check = list(symbol_names)
+    checked = set()
+
+    # Get all top-level symbols defined in this file
+    top_level_defs = {s.get_name() for s in table.get_symbols()}
+
+    while to_check:
+        name = to_check.pop()
+        if name in checked:
+            continue
+        checked.add(name)
+
+        try:
+            # Look for function/class scope
+            symbol_scope = None
+            for child in table.get_children():
+                if child.get_name() == name:
+                    symbol_scope = child
+                    break
+            
+            if symbol_scope:
+                # Find all names referenced in this scope that are globals in this module
+                for ref_name in symbol_scope.get_globals():
+                    if ref_name in top_level_defs and ref_name not in closure:
+                        closure.add(ref_name)
+                        to_check.append(ref_name)
+        except Exception:
+            pass
+            
+    return closure
+
+
+def _compute_symbol_level_hash(path: Path, symbols: set[str]) -> str:
+    """Hash only specific symbols and their transitive closure in a Python file."""
+    try:
+        tree = get_ast(path)
+        closure = _resolve_symbol_closure(path, symbols)
+        
+        # Filter AST nodes
+        needed_nodes = []
+        for node in tree.body:
+            name = None
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = node.name
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        name = target.id
+                        break
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name):
+                    name = node.target.id
+            
+            if name in closure:
+                # Copy and strip docstring
+                node_copy = copy.deepcopy(node)
+                _strip_docstrings(node_copy)
+                needed_nodes.append(ast.dump(node_copy, include_attributes=False))
+        
+        if not needed_nodes:
+            # If no nodes found (e.g. symbols are imports), hash the whole file as fallback
+            return _compute_python_hash(path)
+            
+        combined = "".join(sorted(needed_nodes))
+        return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+    except Exception as e:
+        logger.warning(f"Symbol hashing failed for {path}: {e}")
+        return _compute_python_hash(path)
 
 
 def resolve_absolute_import(module_name: str, roots: list[Path]) -> Path | None:
@@ -188,16 +326,21 @@ def extract_sys_path_additions(path: Path, project_root: Path) -> list[Path]:
     return list(set(new_roots))
 
 
-def find_transitive_dependencies(entry_path: Path, project_root: Path) -> tuple[set[Path], dict[Path, set[Path]]]:
+def find_transitive_dependencies(
+    entry_path: Path, 
+    project_root: Path
+) -> tuple[set[Path], dict[Path, set[Path]], dict[tuple[Path, Path], set[str] | None]]:
     """
     Recursive dependency discovery for Python scripts.
     Returns:
         all_deps: set of all discovered file paths
         import_graph: dict mapping importer -> set of imported files
+        import_names: dict mapping (importer, imported) -> set of imported symbols (None means full module)
     """
     entry_path = entry_path.resolve()
     all_deps = {entry_path}
     import_graph: dict[Path, set[Path]] = {}
+    import_names: dict[tuple[Path, Path], set[str] | None] = {}
     to_visit = [entry_path]
     visited_in_this_run = {entry_path}
     
@@ -222,12 +365,14 @@ def find_transitive_dependencies(entry_path: Path, project_root: Path) -> tuple[
                 # 1. Imports
                 if isinstance(node, ast.Import):
                     for n in node.names:
-                        abs_imports.add(n.name)
+                        abs_imports.add((n.name, None))
                 elif isinstance(node, ast.ImportFrom):
                     if node.level > 0:
-                        rel_imports.append((node.module or "", node.level))
+                        names = frozenset(n.name for n in node.names) if "*" not in [n.name for n in node.names] else None
+                        rel_imports.append((node.module or "", node.level, names))
                     elif node.module:
-                        abs_imports.add(node.module)
+                        names = frozenset(n.name for n in node.names) if "*" not in [n.name for n in node.names] else None
+                        abs_imports.add((node.module, names))
                 # 2. Strings (potential file paths)
                 elif isinstance(node, (ast.Str, ast.Constant)):
                     val = getattr(node, "s", None) if isinstance(node, ast.Str) else getattr(node, "value", None)
@@ -241,16 +386,28 @@ def find_transitive_dependencies(entry_path: Path, project_root: Path) -> tuple[
                         string_paths.add(ref)
 
             # Resolve Absolute Imports
-            for mod in abs_imports:
+            for mod, names in abs_imports:
                 path = resolve_absolute_import(mod, local_roots)
                 if path:
-                    immediate_deps.add(path.resolve())
+                    p_res = path.resolve()
+                    immediate_deps.add(p_res)
+                    key = (current_file, p_res)
+                    if names is None:
+                        import_names[key] = None
+                    else:
+                        import_names.setdefault(key, set()).update(names)
 
             # Resolve Relative Imports
-            for mod, level in rel_imports:
+            for mod, level, names in rel_imports:
                 path = resolve_relative_import(current_file, mod, level)
                 if path:
-                    immediate_deps.add(path.resolve())
+                    p_res = path.resolve()
+                    immediate_deps.add(p_res)
+                    key = (current_file, p_res)
+                    if names is None:
+                        import_names[key] = None
+                    else:
+                        import_names.setdefault(key, set()).update(names)
 
             # Resolve String Paths (e.g. config filenames)
             for s in string_paths:
@@ -281,11 +438,62 @@ def find_transitive_dependencies(entry_path: Path, project_root: Path) -> tuple[
                 if p.suffix == ".py":
                     to_visit.append(p)
                     
-    return all_deps, import_graph
+    return all_deps, import_graph, import_names
 
 
-def compute_per_file_hashes(file_paths: set[Path], project_root: Path) -> dict[str, str]:
+def compute_per_file_hashes(
+    file_paths: set[Path], 
+    project_root: Path,
+    import_names: dict[tuple[Path, Path], set[str] | None] | None = None,
+    entry_point: Path | None = None
+) -> dict[str, str]:
     """Compute mapping of relative path to content hash."""
+    # If import_names and entry_point are provided, calculate needed symbols for Phase 2
+    needed_symbols: dict[Path, set[str] | None] = {}
+    if import_names and entry_point:
+        entry_point = entry_point.resolve()
+        needed_symbols[entry_point] = None  # None means hash the whole executable file
+        
+        # BFS through the import graph to propagate needed symbols
+        to_process = [entry_point]
+        processed = {entry_point}
+        while to_process:
+            importer = to_process.pop(0)
+            # Find all imported files from this importer in import_names
+            for (curr_importer, imported), symbols in import_names.items():
+                if curr_importer == importer:
+                    # Get the closure of symbols actually needed in the importer
+                    importer_needed = needed_symbols.get(importer)
+                    
+                    if importer_needed is None:
+                        # Full module analyzed, take all its specific imports
+                        if imported not in needed_symbols or needed_symbols[imported] is not None:
+                            if symbols is None:
+                                needed_symbols[imported] = None
+                            else:
+                                needed_symbols.setdefault(imported, set()).update(symbols)
+                    else:
+                        # Only specific symbols were needed. 
+                        # We must check if 'symbols' (what we import from 'imported')
+                        # are actually referenced by 'importer_needed'.
+                        importer_closure = _resolve_symbol_closure(importer, importer_needed)
+                        
+                        if symbols is None:
+                            # If we 'import imported', we keep it as None ONLY if ANY name 
+                            # from 'imported' is in importer_closure. 
+                            # Since we don't know the names in 'imported' without parsing it, 
+                            # we stay conservative and keep None if importer_closure is not empty.
+                            needed_symbols[imported] = None
+                        else:
+                            # Only propagate symbols that are actually used in importer's closure
+                            actual_needed = symbols.intersection(importer_closure)
+                            if actual_needed:
+                                needed_symbols.setdefault(imported, set()).update(actual_needed)
+                    
+                    if imported not in processed:
+                        processed.add(imported)
+                        to_process.append(imported)
+
     hashes = {}
     for path in file_paths:
         try:
@@ -293,12 +501,10 @@ def compute_per_file_hashes(file_paths: set[Path], project_root: Path) -> dict[s
         except ValueError:
             rel_path = str(path)
         
-        try:
-            h = hashlib.sha256()
-            h.update(path.read_bytes())
-            hashes[rel_path] = h.hexdigest()
-        except Exception:
-            pass
+        symbols = needed_symbols.get(path)
+        h = _compute_file_hash(path, symbols=symbols)
+        if h:
+            hashes[rel_path] = h
     return hashes
 
 
@@ -329,21 +535,30 @@ def find_import_chain(import_graph: dict[str, list[str]], target_file: str, entr
     return None
 
 
-def compute_aggregate_hash(file_paths: set[Path], project_root: Path) -> str:
+def compute_aggregate_hash(
+    file_paths: set[Path], 
+    project_root: Path,
+    import_names: dict[tuple[Path, Path], set[str] | None] | None = None,
+    entry_point: Path | None = None,
+    precomputed_hashes: dict[str, str] | None = None
+) -> str:
     """Compute an aggregate SHA256 hash of all file contents and relative paths."""
+    # Reuse precomputed hashes if provided to avoid double calculation
+    file_hashes = precomputed_hashes if precomputed_hashes is not None else \
+                  compute_per_file_hashes(file_paths, project_root, import_names, entry_point)
+    
     hasher = hashlib.sha256()
     sorted_paths = sorted(list(file_paths))
     
     for path in sorted_paths:
         try:
-            rel_path = path.relative_to(project_root)
+            rel_path = str(path.relative_to(project_root))
         except ValueError:
-            rel_path = path
+            rel_path = str(path)
         
-        hasher.update(str(rel_path).encode("utf-8"))
-        try:
-            hasher.update(path.read_bytes())
-        except Exception as e:
-            logger.warning(f"Could not read {path}: {e}")
+        hasher.update(rel_path.encode("utf-8"))
+        h = file_hashes.get(rel_path)
+        if h:
+            hasher.update(h.encode("utf-8"))
             
     return hasher.hexdigest()
