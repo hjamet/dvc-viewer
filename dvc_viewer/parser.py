@@ -670,7 +670,6 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
 
     # 2. Get detailed lock info (hashes)
     lock_data = parse_dvc_lock(project_dir)
-    locked_stage_names = set(lock_data.keys())
 
     # 3. Detect if a DVC run is in progress
     is_running, running_stage, running_pid = detect_running_stage(
@@ -814,87 +813,6 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
         visited.add(current)
         for child in downstream.get(current, []):
             child_stage = pipeline.stages.get(child)
-            if child_stage and child_stage.state == "valid":
-                child_stage.state = "needs_rerun"
-            if child not in visited:
-                queue.append(child)
-
-    return pipeline
-
-    # 5. Build edges: if stage B depends on a file that is stage A's output
-    output_to_stage: dict[str, str] = {}
-    for name, stage in stages.items():
-        for out in stage.outs:
-            output_to_stage[out] = name
-        for metric in stage.metrics:
-            output_to_stage[metric] = name
-
-    for name, stage in stages.items():
-        for dep in stage.deps:
-            # 1. Exact match
-            if dep in output_to_stage:
-                source_stage = output_to_stage[dep]
-                if source_stage != name:
-                    pipeline.edges.append(
-                        Edge(source=source_stage, target=name, label=dep)
-                    )
-            # 2. Match directory outputs (if dep is file inside an out dir)
-            else:
-                for out, source_stage in output_to_stage.items():
-                    if dep.startswith(out.rstrip("/") + "/"):
-                        if source_stage != name:
-                            pipeline.edges.append(
-                                Edge(source=source_stage, target=name, label=dep)
-                            )
-                        break
-
-    # 6. Propagate needs_rerun transitively through the DAG.
-    #    If stage A needs rerun (or is running), all downstream stages
-    #    should be marked needs_rerun (Yellow).
-    downstream: dict[str, list[str]] = {}
-    for edge in pipeline.edges:
-        downstream.setdefault(edge.source, []).append(edge.target)
-
-    # If a stage is running, its descendants are pending execution -> needs_rerun
-    if is_running and running_stage:
-        # Mark all descendants of the running stage as 'needs_rerun' (Yellow)
-        # regardless of what dvc.lock says (which reflects the previous successful run)
-        queue = [running_stage]
-        visited_descendants = set()
-        while queue:
-            current = queue.pop(0)
-            children = downstream.get(current, [])
-            for child in children:
-                if child not in visited_descendants:
-                    visited_descendants.add(child)
-                    queue.append(child)
-                    # Force state to needs_rerun (Yellow)
-                    child_stage = pipeline.stages.get(child)
-                    if child_stage:
-                        child_stage.state = "needs_rerun"
-
-    # Also perform standard propagation for static needs_rerun states
-    dirty = {
-        name
-        for name, stage in pipeline.stages.items()
-        if (stage.state in ("needs_rerun", "never_run", "failed", "running"))
-        and not stage.always_changed
-    }
-    # Note: "running" state propagation is handled above more aggressively
-    
-    visited: set[str] = set()
-    queue = list(dirty)
-    
-    while queue:
-        current = queue.pop(0)
-        if current in visited:
-            continue
-        visited.add(current)
-        
-        children = downstream.get(current, [])
-        for child in children:
-            child_stage = pipeline.stages.get(child)
-            # If child was 'valid' (Green), it is invalidated
             if child_stage and child_stage.state == "valid":
                 child_stage.state = "needs_rerun"
             if child not in visited:
