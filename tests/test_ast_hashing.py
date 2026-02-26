@@ -211,3 +211,22 @@ def test_symbol_chain_3_levels(tmp_path):
     hash3 = compute_aggregate_hash(deps, tmp_path, import_names=names, entry_point=a_path)
     
     assert hash1 != hash3
+
+
+def test_hash_deterministic_golden(tmp_path):
+    """
+    Vérifie que le hash produit pour un code donné est strictement identique
+    à une valeur de référence pré-calculée. Cela garantit la stabilité
+    cross-version (via ast.unparse).
+    """
+    file_path = tmp_path / "golden.py"
+    # Code très simple dont on a calculé le hash stable
+    code = "def foo():\n    return 42\n"
+    file_path.write_text(code)
+    
+    clear_caches()
+    h = _compute_python_hash(file_path)
+    
+    # Valeur attendue calculée avec ast.unparse() + sha256
+    expected = "ae7983a21a9e3a4ebc86f2cfad314696371ca76d16d07ccdaeed227f9c9bc8b6"
+    assert h == expected

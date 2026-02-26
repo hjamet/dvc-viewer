@@ -6,6 +6,7 @@ L'algorithme de hash de `dvc-viewer` est conçu pour dépendre le moins possible
 Nous avons rencontré des problèmes d'invalidation (le hash changeait d'un ordinateur à l'autre) dus à deux facteurs qui ont été corrigés :
 1. **Les séparateurs de chemins (`\` vs `/`)** : Sur Windows, les chemins retournaient `\` alors que sur Linux/Mac c'était `/`. Cela est maintenant normalisé en chemins POSIX (`/`) grâce à `.as_posix()`.
 2. **Les retours à la ligne (CRLF vs LF)** : Git sur Windows (via `core.autocrlf`) transforme parfois les sauts de ligne `\n` en `\r\n`. Les fichiers non-Python étaient invalidés car différents au niveau des octets. DVC-Viewer remplace désormais `\r\n` par `\n` en mémoire avant le hash.
+3. **Les versions de Python (AST Stability)** : Les versions 3.12+ de Python ont introduit des changements structurels dans les nœuds AST (ex: `type_params`). L'utilisation de `ast.dump()` produisait des hashs différents selon la version de l'interpréteur. Nous utilisons désormais `ast.unparse()` qui génère un flux de code source canonique indépendant de l'implémentation interne de l'AST.
 
 ## 2. Le Piège des Dates de Modification (mtime)
 L'algorithme de hash de `dvc-viewer` **ne regarde jamais** les dates de modification (mtime). Il hache uniquement le contenu et la structure du code.
