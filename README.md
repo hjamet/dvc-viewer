@@ -16,7 +16,7 @@
 - **Progress Bar & ETA** — ⏱️ During `dvc repro`, a progress bar shows completed stages and estimated completion time based on average execution speed.
 - **Frozen Status** — Visual indicators (❄️) for frozen stages.
 - **One-click Navigation** — Click notifications or list items to zoom and center on any stage.
-- **Smart Code Hashing** — 🧠 Only executable code changes trigger reruns. Comments, docstrings, and whitespace are ignored.
+- **Smart Code Hashing** — 🧠 Only executable code changes trigger reruns. Comments, docstrings, and whitespace are ignored. Stable across Python versions (3.9+) via pure AST unparsing.
 - **Symbol-Level Invalidation** — 🎯 If a script imports `foo` from `utils.py`, changing `bar` in `utils.py` will NOT invalidate the stage.
 - **Click-to-inspect** — Click any node to view its command, dependencies, and outputs
 - **Dark theme** — Sleek glassmorphism UI with smooth animations

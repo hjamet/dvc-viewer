@@ -157,9 +157,9 @@ def _compute_python_hash(path: Path) -> str:
         # Deepcopy to avoid mutating the cached AST when stripping docstrings
         tree_copy = copy.deepcopy(tree)
         _strip_docstrings(tree_copy)
-        # ast.dump(include_attributes=False) eliminates line numbers/whitespace/comments
+        # ast.unparse() eliminates line numbers/whitespace/comments
         # while keeping the normalized structure of the code.
-        normalized = ast.dump(tree_copy, include_attributes=False)
+        normalized = ast.unparse(tree_copy)
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     except Exception as e:
         logger.warning(f"AST hashing failed for {path}, falling back to raw bytes: {e}")
@@ -254,7 +254,7 @@ def _compute_symbol_level_hash(path: Path, symbols: set[str]) -> str:
                 # Copy and strip docstring
                 node_copy = copy.deepcopy(node)
                 _strip_docstrings(node_copy)
-                needed_nodes.append(ast.dump(node_copy, include_attributes=False))
+                needed_nodes.append(ast.unparse(node_copy))
         
         if not needed_nodes:
             # If no nodes found (e.g. symbols are imports), hash the whole file as fallback
