@@ -77,6 +77,26 @@ def _resolve_foreach_items(items: Any, project_dir: Path) -> Any:
     return items
 
 
+def _get_untracked_files(files: list[str], project_dir: Path) -> set[str]:
+    """Check which files are not tracked by Git using git ls-files."""
+    if not files:
+        return set()
+    try:
+        # Run git ls-files to see which of these files are tracked
+        result = subprocess.run(
+            ["git", "ls-files"] + files,
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        tracked = set(result.stdout.splitlines())
+        return set(files) - tracked
+    except Exception:
+        # If git fails for any reason, assume we can't check
+        return set()
+
+
 def _update_stage_hash(
     name: str, 
     script_path: Path, 
@@ -114,6 +134,7 @@ def _update_stage_hash(
         if modified_files:
             # Color codes if terminal supports it
             YELLOW = "\033[93m"
+            RED = "\033[91m"
             BOLD = "\033[1m"
             RESET = "\033[0m"
             DIM = "\033[2m"
@@ -125,8 +146,12 @@ def _update_stage_hash(
                          for k, vs in import_graph.items()}
             entry_rel = str(script_path.relative_to(project_dir))
             
+            # Check for untracked files in the modified list
+            untracked = _get_untracked_files([f for f, _ in modified_files], project_dir)
+            
             for f, reason in modified_files[:3]: # Limit to 3 files to avoid spam
-                print(f"      {BOLD}{f}{RESET} ({reason})")
+                untracked_warn = f" {RED}(NOT TRACKED BY GIT!){RESET}" if f in untracked else ""
+                print(f"      {BOLD}{f}{RESET} ({reason}){untracked_warn}")
                 chain = find_import_chain(str_graph, f, entry_rel)
                 if chain and len(chain) > 1:
                     for i, link in enumerate(chain[1:]):
@@ -135,6 +160,9 @@ def _update_stage_hash(
             
             if len(modified_files) > 3:
                 print(f"      {DIM}... and {len(modified_files) - 3} more files.{RESET}")
+            
+            if untracked:
+                print(f"      {RED}➜  Warning: {len(untracked)} files are not tracked by Git. This will cause invalidations between PCs!{RESET}")
 
     # Write manifest
     new_manifest = {
