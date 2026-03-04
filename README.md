@@ -20,6 +20,7 @@
 - **Symbol-Level Invalidation** — 🎯 If a script imports `foo` from `utils.py`, changing `bar` in `utils.py` will NOT invalidate the stage.
 - **Click-to-inspect** — Click any node to view its command, dependencies, and outputs
 - **Dark theme** — Sleek glassmorphism UI with smooth animations
+- **Concurrent Robustness** — 🛡️ Zero-contention design prevents `rwlock` corruption by monitoring DVC state without triggering internal DVC write-locks during active runs.
 - **Zero config** — Just run `dvc-viewer` inside any DVC project
 
 ## 🚀 Quick Install

@@ -3,7 +3,9 @@
 import textwrap
 from pathlib import Path
 
-from dvc_viewer.parser import parse_dvc_yaml, _load_params, _resolve_interpolation
+from dvc_viewer.parser import parse_dvc_yaml, _load_params, _resolve_interpolation, _safe_read_rwlock
+import json
+import os
 
 
 # ---------------------------------------------------------------------------
@@ -124,3 +126,50 @@ def test_foreach_with_vars_section(tmp_path):
 
     stages = parse_dvc_yaml(tmp_path)
     assert sorted(stages.keys()) == ["train@bert", "train@gpt"]
+# ---------------------------------------------------------------------------
+# _safe_read_rwlock tests
+# ---------------------------------------------------------------------------
+
+
+def test_safe_read_rwlock_valid(tmp_path):
+    """Returns parsed JSON for a valid rwlock file."""
+    rwlock = tmp_path / "rwlock"
+    data = {"read": {"data/foo": {"pid": 123, "cmd": "repro"}}}
+    rwlock.write_text(json.dumps(data))
+    
+    parsed = _safe_read_rwlock(rwlock)
+    assert parsed == data
+
+
+def test_safe_read_rwlock_missing(tmp_path):
+    """Returns None if file doesn't exist."""
+    assert _safe_read_rwlock(tmp_path / "missing") is None
+
+
+def test_safe_read_rwlock_empty_and_clean(tmp_path, monkeypatch):
+    """Deletes empty/corrupted file if no repro process is running."""
+    rwlock = tmp_path / "rwlock"
+    rwlock.write_text("")
+    
+    # Mock pgrep to say no repro running
+    class MockRes:
+        returncode = 1
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MockRes())
+    
+    parsed = _safe_read_rwlock(rwlock)
+    assert parsed is None
+    assert not rwlock.exists()
+
+
+def test_safe_read_rwlock_corrupted_and_clean(tmp_path, monkeypatch):
+    """Deletes corrupted JSON if no repro process is running."""
+    rwlock = tmp_path / "rwlock"
+    rwlock.write_text("{invalid json")
+    
+    class MockRes:
+        returncode = 1
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: MockRes())
+    
+    parsed = _safe_read_rwlock(rwlock)
+    assert parsed is None
+    assert not rwlock.exists()

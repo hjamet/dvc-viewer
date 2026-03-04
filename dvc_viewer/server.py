@@ -805,10 +805,12 @@ async def stop_pipeline():
         return {"stopped": True, "source": "ui"}
 
     # 2. Try external process via rwlock
+    from .parser import _safe_read_rwlock
     rwlock_path = Path(_project_dir) / ".dvc" / "tmp" / "rwlock"
-    if rwlock_path.exists():
+    lock_data = _safe_read_rwlock(rwlock_path)
+
+    if lock_data:
         try:
-            lock_data = json.loads(rwlock_path.read_text(encoding="utf-8"))
             for _path, info in lock_data.get("write", {}).items():
                 if isinstance(info, dict) and "pid" in info:
                     pid = info["pid"]
@@ -819,7 +821,7 @@ async def stop_pipeline():
                     except (ProcessLookupError, PermissionError, OSError):
                         pass
                     break
-        except (json.JSONDecodeError, OSError):
+        except Exception:
             pass
 
     return {"stopped": False, "reason": "No pipeline running"}

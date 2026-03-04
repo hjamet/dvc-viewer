@@ -385,6 +385,10 @@ def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
     or DVC lock held by another process such as a running ``dvc repro``).
     Returns {} if DVC reports no changes.
     """
+    project_dir = Path(project_dir)
+    # Pre-emptively check/clean rwlock before calling DVC to avoid corruption errors
+    _safe_read_rwlock(project_dir / ".dvc" / "tmp" / "rwlock")
+
     dvc_bin = resolve_dvc_bin(project_dir)
     try:
         result = subprocess.run(
@@ -398,16 +402,22 @@ def get_dvc_status(project_dir: str | Path) -> dict[str, Any] | None:
             # dvc status returns non-zero when there are changes, that's fine
             # Only truly fail if there's no output at all
             if result.stdout.strip():
-                return json.loads(result.stdout)
+                try:
+                    return json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    return None
             # No stdout → DVC error (e.g. lock held by running dvc repro)
             return None
         output = result.stdout.strip()
         if not output or output == "{}":
             return {}
-        return json.loads(output)
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            return None
     except FileNotFoundError:
         return None
-    except (subprocess.TimeoutExpired, json.JSONDecodeError):
+    except subprocess.TimeoutExpired:
         return None
 
 
@@ -464,6 +474,44 @@ def _check_stage_hashes_on_disk(
             return False
 
     return True
+
+
+def _safe_read_rwlock(rwlock_path: Path) -> dict | None:
+    """Read and parse the rwlock JSON file directly, with retries and cleanup.
+
+    This avoids calling 'dvc status' which would trigger DVC's own rwlock logic
+    and potentially cause corruption through concurrent writes.
+    """
+    import time
+    if not rwlock_path.exists():
+        return None
+
+    for attempt in range(2):
+        try:
+            raw = rwlock_path.read_text(encoding="utf-8").strip()
+            if not raw:
+                # File exists but is empty -> race condition or corruption
+                if attempt == 0:
+                    time.sleep(0.2)
+                    continue
+                break
+            return json.loads(raw)
+        except (json.JSONDecodeError, OSError):
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+            break
+
+    # If we are here, the file is corrupted or empty after retry.
+    # Check if a repro is actually running to decide if we should delete it.
+    pgrep_res = subprocess.run(["pgrep", "-f", "dvc repro"], capture_output=True)
+    if pgrep_res.returncode != 0:
+        # No dvc repro running -> file is definitely orphan and corrupted
+        try:
+            rwlock_path.unlink()
+        except OSError:
+            pass
+    return None
 
 
 def _extract_pids_from_locks(lock_section: dict) -> set[int]:
@@ -528,86 +576,49 @@ def detect_running_stage(
     Returns (is_running, running_stage_name, pid).
 
     Strategy:
-    1. Run `dvc status` to check if the repository is locked.
-    2. If locked, extract the PID from the error message.
-    3. Verify candidate PIDs (from status or pgrep) against the project's rwlock.
+    1. Check the rwlock file directly (safe, read-only).
+    2. Fallback to pgrep if no rwlock entry found.
+    3. ONLY as a last resort, run `dvc status` if we still think it might be locked.
     """
     project_dir = Path(project_dir)
-    dvc_bin = resolve_dvc_bin(project_dir)
-    lock_pid: int | None = None
-
-    # --- Step 1: Check dvc status for lock errors ---
-    try:
-        # Short timeout: if it doesn't fail quickly with a lock error,
-        # it might be actually calculating status, which is fine.
-        result = subprocess.run(
-            [dvc_bin, "status", "--json"],
-            capture_output=True, text=True, cwd=str(project_dir), timeout=5
-        )
-        if result.returncode == 0:
-            # No lock held -> likely not running a repro that blocks us
-            return False, None, None
-        
-        m = _RE_LOCK_PID.search(result.stderr)
-        if m:
-            lock_pid = int(m.group(1))
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-
-    # --- Step 2: Collect candidate PIDs ---
-    candidate_pids: set[int] = set()
-    if lock_pid:
-        candidate_pids.add(lock_pid)
-    
-    try:
-        pgrep_res = subprocess.run(
-            ["pgrep", "-f", "dvc repro"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if pgrep_res.returncode == 0:
-            for line in pgrep_res.stdout.strip().splitlines():
-                if line.strip().isdigit():
-                    pid = int(line.strip())
-                    if pid != os.getpid():
-                        candidate_pids.add(pid)
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-
-    if not candidate_pids:
-        return False, None, None
-
-    # --- Step 3: Verify candidate PIDs via rwlock ---
     rwlock_path = project_dir / ".dvc" / "tmp" / "rwlock"
     live_pid: int | None = None
     running_stage: str | None = None
 
-    if rwlock_path.exists():
-        try:
-            raw = rwlock_path.read_text(encoding="utf-8").strip()
-            if raw:
-                lock_data = json.loads(raw)
-                read_locks: dict = lock_data.get("read", {})
-                write_locks: dict = lock_data.get("write", {})
-                project_path = project_dir.resolve()
+    # --- Step 1: Safe direct rwlock check ---
+    lock_data = _safe_read_rwlock(rwlock_path)
+    if lock_data:
+        read_locks: dict = lock_data.get("read", {})
+        write_locks: dict = lock_data.get("write", {})
+        project_path = project_dir.resolve()
 
-                # Find which candidate PID is actually mentioned in our rwlock
-                for pid in candidate_pids:
-                    if not _is_dvc_process_alive(pid):
-                        continue
-                    
-                    # Check write locks for this PID
-                    live_write_files: set[str] = set()
-                    for locked_path, info_list in write_locks.items():
-                        entries = info_list if isinstance(info_list, list) else [info_list]
-                        for entry in entries:
-                            if isinstance(entry, dict) and entry.get("pid") == pid:
-                                try:
-                                    rel = str(Path(locked_path).resolve().relative_to(project_path))
-                                except ValueError:
-                                    rel = locked_path
-                                live_write_files.add(rel)
+        # Find any alive PID in the lock file
+        all_pids = _extract_pids_from_locks(read_locks) | _extract_pids_from_locks(write_locks)
+        for pid in all_pids:
+            if _is_dvc_process_alive(pid):
+                live_pid = pid
+                # Identify the stage
+                # Priority: write locks (outputs)
+                live_write_files: set[str] = set()
+                for locked_path, info_list in write_locks.items():
+                    entries = info_list if isinstance(info_list, list) else [info_list]
+                    for entry in entries:
+                        if isinstance(entry, dict) and entry.get("pid") == pid:
+                            try:
+                                rel = str(Path(locked_path).resolve().relative_to(project_path))
+                            except ValueError:
+                                rel = locked_path
+                            live_write_files.add(rel)
 
-                    # Check read locks for this PID
+                if live_write_files:
+                    for name, stage in stages.items():
+                        stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
+                        if stage_outputs & live_write_files:
+                            running_stage = name
+                            break
+                
+                # Fallback: read locks (deps)
+                if running_stage is None:
                     live_read_files: set[str] = set()
                     for locked_path, info_list in read_locks.items():
                         entries = info_list if isinstance(info_list, list) else [info_list]
@@ -618,43 +629,43 @@ def detect_running_stage(
                                 except ValueError:
                                     rel = locked_path
                                 live_read_files.add(rel)
+                    
+                    if live_read_files:
+                        best_match: str | None = None
+                        best_count = 0
+                        for name, stage in stages.items():
+                            stage_deps = set(stage.deps)
+                            overlap = stage_deps & live_read_files
+                            if len(overlap) > best_count:
+                                best_count = len(overlap)
+                                best_match = name
+                        running_stage = best_match
+                
+                if live_pid:
+                    return True, running_stage, live_pid
 
-                    if live_write_files or live_read_files:
-                        live_pid = pid
-                        
-                        # Match write-locked files to stage outputs (most precise)
-                        if live_write_files:
-                            for name, stage in stages.items():
-                                stage_outputs = set(stage.outs) | set(stage.metrics) | set(stage.plots)
-                                if stage_outputs & live_write_files:
-                                    running_stage = name
-                                    break
+    # --- Step 2: Fallback to pgrep ---
+    candidate_pids: set[int] = set()
+    try:
+        pgrep_res = subprocess.run(
+            ["pgrep", "-f", "dvc repro"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if pgrep_res.returncode == 0:
+            for line in pgrep_res.stdout.strip().splitlines():
+                if line.strip().isdigit():
+                    pid = int(line.strip())
+                    if pid != os.getpid() and _is_dvc_process_alive(pid):
+                        candidate_pids.add(pid)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
 
-                        # Fallback: match read-locked files to stage deps
-                        if running_stage is None and live_read_files:
-                            best_match: str | None = None
-                            best_count = 0
-                            for name, stage in stages.items():
-                                stage_deps = set(stage.deps)
-                                overlap = stage_deps & live_read_files
-                                if len(overlap) > best_count:
-                                    best_count = len(overlap)
-                                    best_match = name
-                            running_stage = best_match
-                        
-                        if live_pid:
-                            break
-        except (json.JSONDecodeError, OSError):
-            pass
+    if candidate_pids:
+        return True, None, list(candidate_pids)[0]
 
-    # If we didn't find anything in rwlock but dvc status said we're locked,
-    # it's a strong signal even if we can't identify the specific stage yet.
-    if live_pid is None and lock_pid and _is_dvc_process_alive(lock_pid):
-        live_pid = lock_pid
-
-    if live_pid:
-        return True, running_stage, live_pid
-
+    # --- Step 3: Last resort dvc status (only if we suspect a hidden lock) ---
+    # We skip this if we are confident no dvc repro is running (Step 2 empty).
+    # This prevents the most frequent cause of corruption.
     return False, None, None
 
 
