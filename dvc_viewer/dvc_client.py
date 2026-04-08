@@ -248,7 +248,7 @@ def run_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = Non
         return False, -1, "Error: Execution timed out."
 
 
-def start_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = None, force: bool = False, keep_going: bool = False) -> subprocess.Popen:
+def start_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = None, force: bool = False, keep_going: bool = False, log_file: str | Path | None = None) -> subprocess.Popen:
     """Start `dvc repro` as a background process."""
     cmd = [dvc_bin, "repro"]
     if stage:
@@ -258,15 +258,30 @@ def start_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = N
     if keep_going:
         cmd.append("--keep-going")
 
-    return subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        cwd=str(project_dir),
-        bufsize=1,
-        start_new_session=True,
-    )
+    if log_file:
+        out_file = open(log_file, "w", encoding="utf-8")
+        proc = subprocess.Popen(
+            cmd,
+            stdout=out_file,
+            stderr=subprocess.STDOUT,
+            cwd=str(project_dir),
+            bufsize=1, # Line buffering
+            text=True, # Ensure text mode for line buffering
+            start_new_session=True,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"} # Force unbuffered output for Python subprocesses
+        )
+        proc._out_file = out_file
+        return proc
+    else:
+        return subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=str(project_dir),
+            bufsize=1,
+            start_new_session=True,
+        )
 
 
 def stop_dvc_process(project_dir: str | Path, running_proc: subprocess.Popen | None = None) -> dict:

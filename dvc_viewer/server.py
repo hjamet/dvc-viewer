@@ -646,6 +646,7 @@ async def run_pipeline(request: Request):
 
 @app.get("/api/run-stream")
 async def run_pipeline_stream(
+    request: Request,
     stage: str = Query(None, description="Stage to run (null = all)"),
     force: bool = Query(False, description="Force rerun"),
 ):
@@ -658,94 +659,143 @@ async def run_pipeline_stream(
       stage_done   {"stage": "...", "success": bool} — stage finished
       done         {"success": bool, "failed_stage": ...} — pipeline complete
     """
-    import select
-    import threading
-
-    cmd = [_dvc_bin or "dvc", "repro"]
-    if stage:
-        cmd.append(stage)
-    if force:
-        cmd.append("--force")
-
     keep_going = stage is None
     def sse_event(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
-    def generate():
+    async def generate():
         current_stage = None
         success = True
         failed_stages = []
 
         global _running_proc
-        try:
-            proc = start_dvc_repro(_project_dir, _dvc_bin, stage, force, keep_going)
-            _running_proc = proc
-        except FileNotFoundError:
-            yield sse_event("done", {
-                "success": False,
-                "failed_stage": None,
-                "error": "DVC is not installed or not found in PATH.",
-            })
-            return
+
+        log_file_path = Path(_project_dir) / ".dvc" / "tmp" / "dvc-viewer-run.log"
+
+        # If no process is currently being tracked, start one
+        if _running_proc is None or _running_proc.poll() is not None:
+            # Ensure the directory exists
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                dvc_bin_path = _dvc_bin or "dvc"
+                proc = start_dvc_repro(_project_dir, dvc_bin_path, stage, force, keep_going, log_file=log_file_path)
+                _running_proc = proc
+            except FileNotFoundError:
+                yield sse_event("done", {
+                    "success": False,
+                    "failed_stage": None,
+                    "error": "DVC is not installed or not found in PATH.",
+                })
+                return
 
         re_running = re.compile(r"Running stage '([\w@.-]+)'")
         re_skipped = re.compile(r"Stage '([\w@.-]+)' didn't change")
         re_failed  = re.compile(r"failed to reproduce '([\w@.-]+)'")
         re_failed2 = re.compile(r"ERROR:.*stage '([\w@.-]+)'")
 
-        for raw_line in proc.stdout:
-            line = raw_line.rstrip("\n")
+        # Open the log file for reading
+        try:
+            # Wait briefly to ensure file is created
+            for _ in range(10):
+                if log_file_path.exists():
+                    break
+                await asyncio.sleep(0.1)
 
-            # Detect stage transitions
-            m_run = re_running.search(line)
-            m_skip = re_skipped.search(line)
+            with open(log_file_path, "r", encoding="utf-8") as f:
+                buffer = ""
+                while True:
+                    # Check if client disconnected
+                    if await request.is_disconnected():
+                        print("Client disconnected, stopping log tailing.")
+                        break
 
-            if m_run:
-                new_stage = m_run.group(1)
-                # Previous stage finished successfully
-                if current_stage and current_stage != new_stage:
-                    mark_stage_complete(current_stage)
-                    yield sse_event("stage_done", {
-                        "stage": current_stage, "success": True,
-                    })
-                current_stage = new_stage
-                mark_stage_started(new_stage)
-                yield sse_event("stage_start", {"stage": new_stage})
+                    chunk = f.read(1024) # Read in chunks
+                    if not chunk:
+                        if _running_proc and _running_proc.poll() is not None:
+                            # Process finished, send any remaining buffer
+                            if buffer:
+                                # Append newline so the while loop below will process it
+                                buffer += "\n"
+                            else:
+                                break
+                        else:
+                            # Wait for more output
+                            await asyncio.sleep(0.1)
+                            continue
+                    else:
+                        buffer += chunk
 
-            elif m_skip:
-                skipped = m_skip.group(1)
-                # Close previous stage if needed
-                if current_stage and current_stage != skipped:
-                    mark_stage_complete(current_stage)
-                    yield sse_event("stage_done", {
-                        "stage": current_stage, "success": True,
-                    })
-                mark_stage_complete(skipped)
-                current_stage = None
-                yield sse_event("stage_skip", {"stage": skipped})
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
 
-            # Check for failures
-            m_fail = re_failed.search(line) or re_failed2.search(line)
-            if m_fail:
-                f_stage = m_fail.group(1)
-                mark_stage_failed(f_stage)
-                if f_stage not in failed_stages:
-                    failed_stages.append(f_stage)
-                success = False
+                        # Detect stage transitions
+                        m_run = re_running.search(line)
+                        m_skip = re_skipped.search(line)
 
-            # Send log line
-            print(f"[{current_stage or 'dvc'}] {line}")
-            yield sse_event("log", {
-                "stage": current_stage,
-                "line": line,
-            })
+                        if m_run:
+                            new_stage = m_run.group(1)
+                            # Previous stage finished successfully
+                            if current_stage and current_stage != new_stage:
+                                mark_stage_complete(current_stage)
+                                yield sse_event("stage_done", {
+                                    "stage": current_stage, "success": True,
+                                })
+                            current_stage = new_stage
+                            mark_stage_started(new_stage)
+                            yield sse_event("stage_start", {"stage": new_stage})
 
-        proc.wait()
-        _running_proc = None
+                        elif m_skip:
+                            skipped = m_skip.group(1)
+                            # Close previous stage if needed
+                            if current_stage and current_stage != skipped:
+                                mark_stage_complete(current_stage)
+                                yield sse_event("stage_done", {
+                                    "stage": current_stage, "success": True,
+                                })
+                            mark_stage_complete(skipped)
+                            current_stage = None
+                            yield sse_event("stage_skip", {"stage": skipped})
+
+                        # Check for failures
+                        m_fail = re_failed.search(line) or re_failed2.search(line)
+                        if m_fail:
+                            f_stage = m_fail.group(1)
+                            mark_stage_failed(f_stage)
+                            if f_stage not in failed_stages:
+                                failed_stages.append(f_stage)
+                            success = False
+
+                        # Send log line
+                        yield sse_event("log", {
+                            "stage": current_stage,
+                            "line": line,
+                        })
+
+        except Exception as e:
+            print(f"Error reading log file: {e}")
+
+        # If client disconnected, don't send completion events, process is still running
+        if await request.is_disconnected():
+            return
+
+        if _running_proc:
+            _running_proc.wait()
+            returncode = _running_proc.returncode
+            if hasattr(_running_proc, '_out_file') and _running_proc._out_file:
+                try:
+                    _running_proc._out_file.close()
+                except Exception:
+                    pass
+            # Only clear if we are still the tracking process (avoid race condition on fast restarts)
+            if _running_proc is not None and _running_proc.poll() is not None:
+                _running_proc = None
+        else:
+            returncode = 0
 
         # Close final stage
         if current_stage:
-            stage_ok = proc.returncode == 0 and (current_stage not in failed_stages)
+            stage_ok = returncode == 0 and (current_stage not in failed_stages)
             if stage_ok:
                 mark_stage_complete(current_stage)
             yield sse_event("stage_done", {
@@ -753,8 +803,8 @@ async def run_pipeline_stream(
                 "success": stage_ok,
             })
 
-        cancelled = proc.returncode in (-15, -9, 137)  # SIGTERM / SIGKILL
-        if proc.returncode != 0:
+        cancelled = returncode in (-15, -9, 137)  # SIGTERM / SIGKILL
+        if returncode != 0:
             success = False
 
         yield sse_event("done", {

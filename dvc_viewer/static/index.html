@@ -3807,12 +3807,25 @@
                                 if (data.stage && data.line !== undefined) {
                                     if (!stageLogs[data.stage]) stageLogs[data.stage] = '';
                                     stageLogs[data.stage] += data.line + '\n';
+
+                                    // Limit log size to prevent memory and DOM issues
+                                    // Keep roughly the last 2000 lines (or 200000 chars)
+                                    if (stageLogs[data.stage].length > 200000) {
+                                        stageLogs[data.stage] = "... (logs truncated) ...\n" + stageLogs[data.stage].slice(-190000);
+                                    }
                                 }
                                 if (data.stage && data.stage === selectedStage) {
                                     const logPre = document.querySelector('.sidebar-logs-content');
                                     if (logPre) {
-                                        logPre.textContent = stageLogs[data.stage];
-                                        logPre.scrollTop = logPre.scrollHeight;
+                                        // Use requestAnimationFrame to throttle DOM updates
+                                        if (!logPre.dataset.updatePending) {
+                                            logPre.dataset.updatePending = 'true';
+                                            requestAnimationFrame(() => {
+                                                logPre.textContent = stageLogs[data.stage];
+                                                logPre.scrollTop = logPre.scrollHeight;
+                                                logPre.dataset.updatePending = '';
+                                            });
+                                        }
                                     }
                                 }
                                 break;
