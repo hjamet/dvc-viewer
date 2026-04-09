@@ -20,10 +20,21 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
     creds_data = os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA")
     folder_id = os.environ.get("DVC_GDRIVE_FOLDER_ID")
 
-    if not creds_data or not folder_id:
+    if not creds_data:
         return
 
     print("☁️  Configuring Google Drive Auto-Sync...")
+
+    if not folder_id:
+        from .gdrive import discover_or_create_dvc_folder
+        folder_id = discover_or_create_dvc_folder(creds_data, project_dir)
+        if not folder_id:
+            print("❌ Skipping Google Drive auto-sync configuration.")
+            return
+
+        # Set it so other parts of the app can use it without re-discovery
+        os.environ["DVC_GDRIVE_FOLDER_ID"] = folder_id
+
 
     try:
         # Check if JSON is valid

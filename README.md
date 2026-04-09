@@ -81,24 +81,32 @@ To enable this, you need a **Google Cloud Service Account** with access to your 
 5. Note the email address of the Service Account (e.g., `my-bot@project.iam.gserviceaccount.com`).
 
 ### 2. Share your Google Drive Folder
-1. Go to your Google Drive and create a folder for DVC data.
+1. Go to your Google Drive and create a folder for DVC data. By default, DVC-Viewer looks for a folder named **"DVC"** at the root of your Drive.
 2. Share this folder with the **Service Account email address** (granting "Editor" access).
-3. Copy the **Folder ID** from the URL (the part after `/folders/`).
+3. (Optional) If you want to use a different folder name, you can set the `DVC_GDRIVE_WORKSPACE_NAME` environment variable.
 
 ### 3. Run DVC-Viewer
 Set the following environment variables when running `dvc-viewer`:
 
-- `DVC_GDRIVE_FOLDER_ID`: The ID of your Drive folder.
 - `DVC_GDRIVE_CREDENTIALS_DATA`: The *raw content* of the JSON key file you downloaded.
+- `DVC_GDRIVE_WORKSPACE_NAME`: (Optional) The name of the workspace folder on Drive (defaults to `"DVC"`).
+- `DVC_GDRIVE_FOLDER_ID`: (Optional) Bypass auto-discovery and provide the exact ID of your Drive folder directly.
 - `DVC_VIEWER_GIT_AUTO_COMMIT`: (Optional) Set to `0` or `false` to disable automatic git commits (enabled by default).
 
 ```bash
-export DVC_GDRIVE_FOLDER_ID="1A2b3C4d5E6f7G8h9I0j"
 export DVC_GDRIVE_CREDENTIALS_DATA='{ "type": "service_account", "project_id": "...", ... }'
+# Optional:
+# export DVC_GDRIVE_WORKSPACE_NAME="My_DVC_Workspace"
+# export DVC_GDRIVE_FOLDER_ID="1A2b3C4d5E6f7G8h9I0j"
 export DVC_VIEWER_GIT_AUTO_COMMIT="false"
 
 dvc-viewer
 ```
+
+**Auto-Discovery Process:**
+1. DVC-Viewer uses the Service Account to find the workspace folder (e.g. `"DVC"`).
+2. Inside that workspace, it looks for a sub-folder matching the name of your local project directory.
+3. If it doesn't exist, it creates it automatically!
 
 **What it does automatically:**
 - Configures DVC to use Google Drive via the service account.
