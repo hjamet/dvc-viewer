@@ -90,12 +90,12 @@ Set the following environment variables when running `dvc-viewer`:
 
 - `DVC_GDRIVE_FOLDER_ID`: The ID of your Drive folder.
 - `DVC_GDRIVE_CREDENTIALS_DATA`: The *raw content* of the JSON key file you downloaded.
-- `DVC_VIEWER_GIT_AUTO_COMMIT`: (Optional) Set to `1` or `true` to enable automatic git commits.
+- `DVC_VIEWER_GIT_AUTO_COMMIT`: (Optional) Set to `0` or `false` to disable automatic git commits (enabled by default).
 
 ```bash
 export DVC_GDRIVE_FOLDER_ID="1A2b3C4d5E6f7G8h9I0j"
 export DVC_GDRIVE_CREDENTIALS_DATA='{ "type": "service_account", "project_id": "...", ... }'
-export DVC_VIEWER_GIT_AUTO_COMMIT="true"
+export DVC_VIEWER_GIT_AUTO_COMMIT="false"
 
 dvc-viewer
 ```
@@ -103,7 +103,7 @@ dvc-viewer
 **What it does automatically:**
 - Configures DVC to use Google Drive via the service account.
 - **Auto-Pull:** Performs `dvc pull` silently before starting any pipeline execution.
-- **Auto Git Commit:** If `DVC_VIEWER_GIT_AUTO_COMMIT` is set, `dvc.yaml` and `dvc.lock` changes are automatically committed to git, capturing the state of the successful run.
+- **Auto Git Commit:** By default (unless `DVC_VIEWER_GIT_AUTO_COMMIT` is disabled), `dvc.yaml` and `dvc.lock` changes are automatically committed to git, capturing the state of the successful run.
 - **Auto-Push:** Performs `dvc push` in the background after a successful execution.
 - **Auto-Cleanup (GC):** Runs `dvc gc --cloud --workspace` in the background to delete old, unused data from Drive, saving space!
 
