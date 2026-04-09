@@ -635,6 +635,19 @@ async def run_pipeline(request: Request):
             if match:
                 failed_stage = match.group(1)
 
+    # Trigger Auto-Push and GC if successful
+    if success and os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
+        def auto_push_sync():
+            try:
+                print("☁️ Auto-Pushing to Google Drive...")
+                subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True)
+                print("☁️ Auto-Cleaning (GC) on Google Drive...")
+                subprocess.run([_dvc_bin, "gc", "--cloud", "--workspace", "-f"], cwd=str(_project_dir), capture_output=True)
+            except Exception as e:
+                print(f"⚠️ Auto-Push/GC failed: {e}")
+        import threading
+        threading.Thread(target=auto_push_sync, daemon=True).start()
+
     return JSONResponse(content={
         "success": success,
         "returncode": returncode,
@@ -670,6 +683,9 @@ async def run_pipeline_stream(
     keep_going = stage is None
     def sse_event(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    # We will trigger push and gc ONLY ONCE at the very end of the pipeline run.
+    # Triggering per stage causes DVC lock contention and saturates the network/Drive API.
 
     def generate():
         current_stage = None
@@ -763,6 +779,19 @@ async def run_pipeline_stream(
             "failed_stages": failed_stages,
             "cancelled": cancelled,
         })
+
+        # Trigger push/GC AFTER the run if it was somewhat successful
+        if success and os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
+            def auto_push_sync():
+                try:
+                    print("☁️ Auto-Pushing to Google Drive...")
+                    subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True)
+                    print("☁️ Auto-Cleaning (GC) on Google Drive...")
+                    subprocess.run([_dvc_bin, "gc", "--cloud", "--workspace", "-f"], cwd=str(_project_dir), capture_output=True)
+                except Exception as e:
+                    print(f"⚠️ Auto-Push/GC failed: {e}")
+            import threading
+            threading.Thread(target=auto_push_sync, daemon=True).start()
 
     return StreamingResponse(
         generate(),

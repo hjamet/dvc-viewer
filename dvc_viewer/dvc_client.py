@@ -226,8 +226,19 @@ def detect_running_stage(
     return False, None, None
 
 
+def _auto_pull(project_dir: str | Path, dvc_bin: str) -> None:
+    """Silently run dvc pull if auto-sync is configured."""
+    if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
+        try:
+            print("☁️ Auto-Pulling from Google Drive...")
+            subprocess.run([dvc_bin, "pull"], cwd=str(project_dir), capture_output=True, timeout=600)
+        except Exception as e:
+            print(f"⚠️ Auto-Pull failed: {e}")
+
 def run_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = None, force: bool = False, keep_going: bool = False) -> tuple[bool, int, str]:
     """Run `dvc repro` synchronously and return (success, returncode, logs)."""
+    _auto_pull(project_dir, dvc_bin)
+
     cmd = [dvc_bin, "repro"]
     if stage:
         cmd.append(stage)
@@ -250,6 +261,8 @@ def run_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = Non
 
 def start_dvc_repro(project_dir: str | Path, dvc_bin: str, stage: str | None = None, force: bool = False, keep_going: bool = False) -> subprocess.Popen:
     """Start `dvc repro` as a background process."""
+    _auto_pull(project_dir, dvc_bin)
+
     cmd = [dvc_bin, "repro"]
     if stage:
         cmd.append(stage)

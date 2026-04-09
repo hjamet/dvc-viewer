@@ -12,6 +12,59 @@ import sys
 from pathlib import Path
 
 
+import json
+import subprocess
+
+def _setup_gdrive_sync(project_dir: Path) -> None:
+    """Configure DVC remote if GDrive environment variables are present."""
+    creds_data = os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA")
+    folder_id = os.environ.get("DVC_GDRIVE_FOLDER_ID")
+
+    if not creds_data or not folder_id:
+        return
+
+    print("☁️  Configuring Google Drive Auto-Sync...")
+    # Use a temp file for credentials to avoid committing it
+    import tempfile
+
+    try:
+        # Check if JSON is valid
+        json.loads(creds_data)
+
+        # Create a temp directory for the credentials file
+        temp_dir = Path(tempfile.mkdtemp(prefix="dvc-viewer-"))
+        creds_file = temp_dir / "gdrive_credentials.json"
+        creds_file.write_text(creds_data, encoding="utf-8")
+
+        # Register an exit handler to cleanup the temp directory if possible
+        import atexit
+        def cleanup_creds():
+            try:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+        atexit.register(cleanup_creds)
+
+    except json.JSONDecodeError:
+        print("❌ Invalid JSON in DVC_GDRIVE_CREDENTIALS_DATA")
+        return
+
+    from .dvc_client import resolve_dvc_bin
+    dvc_bin = resolve_dvc_bin(project_dir)
+
+    # 1. Add remote
+    subprocess.run([dvc_bin, "remote", "add", "-d", "-f", "gdrive_remote", f"gdrive://{folder_id}"],
+                   cwd=str(project_dir), capture_output=True)
+
+    # 2. Configure Service Account locally
+    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "true"],
+                   cwd=str(project_dir), capture_output=True)
+    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_service_account_json_file_path", str(creds_file)],
+                   cwd=str(project_dir), capture_output=True)
+
+    print("✅ Google Drive remote 'gdrive_remote' configured as default.")
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dvc-viewer",
@@ -45,7 +98,10 @@ def main() -> None:
         print("   Run this command from inside a DVC project.", file=sys.stderr)
         sys.exit(1)
 
-    # 1. Run the auto-updater to ensure hashes and dvc.yaml are consistent
+    # 1. Setup Auto-Sync Drive Configuration if available
+    _setup_gdrive_sync(project_dir)
+
+    # 2. Run the auto-updater to ensure hashes and dvc.yaml are consistent
     from .updater import update_dvc_yaml
     update_dvc_yaml(project_dir)
 
