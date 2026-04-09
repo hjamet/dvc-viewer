@@ -640,7 +640,7 @@ async def run_pipeline(request: Request):
         def background_sync():
             try:
                 # 1. Auto Git Commit
-                if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT") in ("1", "true", "True", "yes"):
+                if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT", "true").lower() not in ("0", "false", "no"):
                     has_git = Path(_project_dir, ".git").exists()
                     if has_git:
                         print("📝 Auto-committing DVC changes to Git...")
@@ -795,7 +795,7 @@ async def run_pipeline_stream(
                 # Previous stage finished successfully
                 if current_stage and current_stage != new_stage:
                     mark_stage_complete(current_stage)
-                    if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT") in ("1", "true", "True", "yes"):
+                    if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT", "true").lower() not in ("0", "false", "no"):
                         _commit_stage_logs(current_stage, list(stage_logs))
 
                     yield sse_event("stage_done", {
@@ -811,7 +811,7 @@ async def run_pipeline_stream(
                 # Close previous stage if needed
                 if current_stage and current_stage != skipped:
                     mark_stage_complete(current_stage)
-                    if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT") in ("1", "true", "True", "yes"):
+                    if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT", "true").lower() not in ("0", "false", "no"):
                         _commit_stage_logs(current_stage, list(stage_logs))
 
                     yield sse_event("stage_done", {
@@ -887,7 +887,7 @@ async def run_pipeline_stream(
             stage_ok = returncode == 0 and (current_stage not in failed_stages)
             if stage_ok:
                 mark_stage_complete(current_stage)
-                if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT") in ("1", "true", "True", "yes"):
+                if os.environ.get("DVC_VIEWER_GIT_AUTO_COMMIT", "true").lower() not in ("0", "false", "no"):
                     _commit_stage_logs(current_stage, list(stage_logs))
 
             yield sse_event("stage_done", {
