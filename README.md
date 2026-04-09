@@ -67,6 +67,46 @@ The web interface opens automatically at [http://localhost:8686](http://localhos
  - DVC installed and accessible in `$PATH`
  - A project with a `dvc.yaml` file
 
+## ☁️ Auto-Sync with Google Drive
+
+DVC-Viewer can automatically pull, push, and clean up your remote DVC data on Google Drive without any manual configuration or browser interaction. This is especially useful for "headless" environments like virtual machines or cloud agents.
+
+To enable this, you need a **Google Cloud Service Account** with access to your Drive folder.
+
+### 1. Setup the Service Account
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and select/create a project.
+2. Enable the **Google Drive API** for the project.
+3. Go to **IAM & Admin > Service Accounts** and create a new Service Account (no specific roles are needed).
+4. Go to the keys for that Service Account, and **Create a new JSON key**. Download this file.
+5. Note the email address of the Service Account (e.g., `my-bot@project.iam.gserviceaccount.com`).
+
+### 2. Share your Google Drive Folder
+1. Go to your Google Drive and create a folder for DVC data.
+2. Share this folder with the **Service Account email address** (granting "Editor" access).
+3. Copy the **Folder ID** from the URL (the part after `/folders/`).
+
+### 3. Run DVC-Viewer
+Set the following environment variables when running `dvc-viewer`:
+
+- `DVC_GDRIVE_FOLDER_ID`: The ID of your Drive folder.
+- `DVC_GDRIVE_CREDENTIALS_DATA`: The *raw content* of the JSON key file you downloaded.
+- `DVC_VIEWER_GIT_AUTO_COMMIT`: (Optional) Set to `1` or `true` to enable automatic git commits.
+
+```bash
+export DVC_GDRIVE_FOLDER_ID="1A2b3C4d5E6f7G8h9I0j"
+export DVC_GDRIVE_CREDENTIALS_DATA='{ "type": "service_account", "project_id": "...", ... }'
+export DVC_VIEWER_GIT_AUTO_COMMIT="true"
+
+dvc-viewer
+```
+
+**What it does automatically:**
+- Configures DVC to use Google Drive via the service account.
+- **Auto-Pull:** Performs `dvc pull` silently before starting any pipeline execution.
+- **Auto Git Commit:** If `DVC_VIEWER_GIT_AUTO_COMMIT` is set, `dvc.yaml` and `dvc.lock` changes are automatically committed to git, capturing the state of the successful run.
+- **Auto-Push:** Performs `dvc push` in the background after a successful execution.
+- **Auto-Cleanup (GC):** Runs `dvc gc --cloud --workspace` in the background to delete old, unused data from Drive, saving space!
+
 ## 🪝 Hooks
 
 DVC-Viewer supports **project-level hooks** — scripts that run automatically after specific operations.
