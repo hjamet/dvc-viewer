@@ -72,10 +72,19 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
                    cwd=str(project_dir), capture_output=True)
 
     # 2. Configure Service Account locally
-    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "true"],
-                   cwd=str(project_dir), capture_output=True)
-    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_service_account_json_file_path", str(creds_file)],
-                   cwd=str(project_dir), capture_output=True)
+    if json.loads(creds_data).get("type") == "service_account":
+        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "true"], cwd=str(project_dir), capture_output=True)
+        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_service_account_json_file_path", str(creds_file)], cwd=str(project_dir), capture_output=True)
+    else:
+        # It is OAuth client id/secret
+        creds_json = json.loads(creds_data)
+        app_type = "installed" if "installed" in creds_json else "web"
+        client_id = creds_json[app_type]["client_id"]
+        client_secret = creds_json[app_type]["client_secret"]
+        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "false"], cwd=str(project_dir), capture_output=True)
+        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_client_id", client_id], cwd=str(project_dir), capture_output=True)
+        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_client_secret", client_secret], cwd=str(project_dir), capture_output=True)
+
 
     print("✅ Google Drive remote 'gdrive_remote' configured as default.")
 

@@ -14,9 +14,19 @@ def discover_dvc_folder(creds_data: str) -> str | None:
     """
     try:
         creds_dict = json.loads(creds_data)
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
-        )
+
+        # Check if this is a service account or an OAuth2 installed app credentials
+        if creds_dict.get("type") == "service_account":
+            creds = service_account.Credentials.from_service_account_info(
+                creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+            )
+        elif "installed" in creds_dict or "web" in creds_dict:
+            print("⚠️ OAuth2 client credentials detected. DVC folder auto-discovery requires a Service Account.")
+            return None
+        else:
+            print("⚠️ Unknown Google credentials format.")
+            return None
+
         service = build('drive', 'v3', credentials=creds)
 
         folder_name = os.environ.get("DVC_GDRIVE_WORKSPACE_NAME", "DVC")
