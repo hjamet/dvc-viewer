@@ -665,9 +665,13 @@ async def run_pipeline(request: Request):
                 # 2. Auto Push & GC
                 if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
                     print("☁️ Auto-Pushing to Google Drive...")
-                    subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True)
+                    push_res = subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True, text=True)
+                    if push_res.returncode != 0:
+                        print(f"❌ DVC Auto-Push Failed (code {push_res.returncode}):\n{push_res.stderr}\n{push_res.stdout}")
                     print("☁️ Auto-Cleaning (GC) on Google Drive...")
-                    subprocess.run([_dvc_bin, "gc", "--cloud", "--workspace", "--all-commits", "--date", "10 days ago", "-f"], cwd=str(_project_dir), capture_output=True)
+                    gc_res = subprocess.run([_dvc_bin, "gc", "--cloud", "--workspace", "--all-commits", "--date", "10 days ago", "-f"], cwd=str(_project_dir), capture_output=True, text=True)
+                    if gc_res.returncode != 0:
+                        print(f"❌ DVC Auto-GC Failed (code {gc_res.returncode}):\n{gc_res.stderr}\n{gc_res.stdout}")
             except Exception as e:
                 print(f"⚠️ Background sync task failed: {e}")
         import threading
@@ -725,7 +729,9 @@ async def run_pipeline_stream(
                         # Auto-push DVC first so we never push a git commit referencing missing remote data
                         if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
                             print(f"☁️ Auto-Pushing {stg_name} to Google Drive...")
-                            subprocess.run([_dvc_bin, "push", stg_name], cwd=str(_project_dir), capture_output=True)
+                            push_res = subprocess.run([_dvc_bin, "push", stg_name], cwd=str(_project_dir), capture_output=True, text=True)
+                            if push_res.returncode != 0:
+                                print(f"❌ DVC Auto-Push for stage {stg_name} Failed (code {push_res.returncode}):\n{push_res.stderr}\n{push_res.stdout}")
 
                         # Now push Git
                         rebase_res = subprocess.run(["git", "pull", "--rebase"], cwd=str(_project_dir), capture_output=True)
@@ -894,9 +900,15 @@ async def run_pipeline_stream(
                     # Auto Push & GC
                     if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
                         print("☁️ Final Auto-Pushing to Google Drive...")
-                        subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True)
+                        push_res = subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True, text=True)
+                        if push_res.returncode != 0:
+                            print(f"❌ DVC Auto-Push Final Failed (code {push_res.returncode}):\n{push_res.stderr}\n{push_res.stdout}")
+                        else:
+                            print("✅ DVC Auto-Push Final Succeeded.")
                         print("☁️ Auto-Cleaning (GC) on Google Drive...")
-                        subprocess.run([_dvc_bin, "gc", "--cloud", "--workspace", "--all-commits", "--date", "10 days ago", "-f"], cwd=str(_project_dir), capture_output=True)
+                        gc_res = subprocess.run([_dvc_bin, "gc", "--cloud", "--workspace", "--all-commits", "--date", "10 days ago", "-f"], cwd=str(_project_dir), capture_output=True, text=True)
+                        if gc_res.returncode != 0:
+                            print(f"❌ DVC Auto-GC Failed (code {gc_res.returncode}):\n{gc_res.stderr}\n{gc_res.stdout}")
                 except Exception as e:
                     print(f"⚠️ Background sync task failed: {e}")
             import threading
