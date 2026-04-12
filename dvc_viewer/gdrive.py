@@ -7,11 +7,11 @@ import logging
 # Suppress googleapiclient warning about file_cache
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
-def discover_dvc_folder(token_data: str) -> str | None:
+def discover_dvc_folder(token_data: str, project_name: str) -> str | None:
     """
-    Scans Google Drive for a folder named exactly 'DVC' (or DVC_GDRIVE_WORKSPACE_NAME).
-    Creates it if it doesn't exist.
-    Returns the Folder ID.
+    Scans Google Drive for a root folder named exactly 'DVC' (or DVC_GDRIVE_WORKSPACE_NAME),
+    and a subfolder named after the project_name. Creates them if they don't exist.
+    Returns the ID of the project subfolder.
     """
     try:
         token_dict = json.loads(token_data)
@@ -19,28 +19,48 @@ def discover_dvc_folder(token_data: str) -> str | None:
 
         service = build('drive', 'v3', credentials=creds)
 
-        folder_name = os.environ.get("DVC_GDRIVE_WORKSPACE_NAME", "DVC")
+        root_folder_name = os.environ.get("DVC_GDRIVE_WORKSPACE_NAME", "DVC")
 
-        # Search for folders with the exact name, not trashed
-        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        # 1. Search for root folder
+        query = f"name='{root_folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents"
         results = service.files().list(q=query, spaces='drive', fields='files(id, name, parents)').execute()
         files = results.get('files', [])
 
         if len(files) > 0:
-            print(f"🎯 Discovered Google Drive folder '{folder_name}' with ID: {files[0]['id']}")
-            return files[0]['id']
+            root_folder_id = files[0]['id']
+            print(f"🎯 Discovered root Google Drive folder '{root_folder_name}' with ID: {root_folder_id}")
         else:
-            print(f"✨ Creating Google Drive folder '{folder_name}' at the root...")
+            print(f"✨ Creating root Google Drive folder '{root_folder_name}'...")
             file_metadata = {
-                'name': folder_name,
+                'name': root_folder_name,
                 'mimeType': 'application/vnd.google-apps.folder'
             }
             folder = service.files().create(body=file_metadata, fields='id').execute()
-            folder_id = folder.get('id')
-            print(f"✅ Folder '{folder_name}' created successfully with ID: {folder_id}")
-            return folder_id
+            root_folder_id = folder.get('id')
+            print(f"✅ Root folder '{root_folder_name}' created successfully with ID: {root_folder_id}")
+
+        # 2. Search for project subfolder inside root folder
+        query = f"name='{project_name}' and mimeType='application/vnd.google-apps.folder' and '{root_folder_id}' in parents and trashed=false"
+        results = service.files().list(q=query, spaces='drive', fields='files(id, name, parents)').execute()
+        subfiles = results.get('files', [])
+
+        if len(subfiles) > 0:
+            subfolder_id = subfiles[0]['id']
+            print(f"🎯 Discovered project subfolder '{project_name}' inside '{root_folder_name}' with ID: {subfolder_id}")
+            return subfolder_id
+        else:
+            print(f"✨ Creating project subfolder '{project_name}' inside '{root_folder_name}'...")
+            file_metadata = {
+                'name': project_name,
+                'parents': [root_folder_id],
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = service.files().create(body=file_metadata, fields='id').execute()
+            subfolder_id = folder.get('id')
+            print(f"✅ Project subfolder '{project_name}' created successfully with ID: {subfolder_id}")
+            return subfolder_id
 
     except Exception as e:
-        print(f"❌ Failed to discover or create Google Drive folder: {e}")
+        print(f"❌ Failed to discover or create Google Drive folder structure: {e}")
 
     return None

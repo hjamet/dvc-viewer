@@ -28,7 +28,7 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
         print("🔍 Searching for Google Drive DVC workspace...")
         try:
             from .gdrive import discover_dvc_folder
-            folder_id = discover_dvc_folder(token_data)
+            folder_id = discover_dvc_folder(token_data, project_dir.name)
             if folder_id:
                 os.environ["DVC_GDRIVE_FOLDER_ID"] = folder_id
             else:
