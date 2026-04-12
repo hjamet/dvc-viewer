@@ -17,51 +17,80 @@ import subprocess
 
 def _setup_gdrive_sync(project_dir: Path) -> None:
     """Configure DVC remote if GDrive environment variables are present."""
-    creds_data = os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA")
+    creds_data = os.environ.get("DVC_GDRIVE_CREDENTIALS")
+    token_data = os.environ.get("DVC_GDRIVE_TOKEN")
     folder_id = os.environ.get("DVC_GDRIVE_FOLDER_ID")
 
-    if not creds_data:
+    if not creds_data or not token_data:
         return
 
     if not folder_id:
         print("🔍 Searching for Google Drive DVC workspace...")
         try:
             from .gdrive import discover_dvc_folder
-            folder_id = discover_dvc_folder(creds_data)
+            folder_id = discover_dvc_folder(token_data)
             if folder_id:
                 os.environ["DVC_GDRIVE_FOLDER_ID"] = folder_id
             else:
-                print("❌ Could not determine Google Drive Folder ID. Auto-Sync disabled.")
+                print("❌ Could not determine or create Google Drive Folder ID. Auto-Sync disabled.")
                 return
         except ImportError:
             print("⚠️ Google API client libraries not installed. Please install them to use Drive auto-discovery.")
             return
 
     print("☁️  Configuring Google Drive Auto-Sync...")
-
     try:
-        # Check if JSON is valid
-        json.loads(creds_data)
+        creds_json = json.loads(creds_data)
+        token_json = json.loads(token_data)
 
-        # We need the credentials file to be persistent across git commands and DVC runs.
-        # We will write it inside the .dvc-viewer config dir, but add it to .gitignore
+        # Convert the modern google-auth-oauthlib format into the legacy oauth2client format
+        # required by pydrive2 and DVC's internal `gdrive_user_credentials_file`.
+        legacy_token = {
+            "access_token": token_json.get("token"),
+            "client_id": token_json.get("client_id"),
+            "client_secret": token_json.get("client_secret"),
+            "refresh_token": token_json.get("refresh_token"),
+            "token_expiry": token_json.get("expiry"),
+            "token_uri": token_json.get("token_uri"),
+            "user_agent": None,
+            "revoke_uri": "https://oauth2.googleapis.com/revoke",
+            "id_token": None,
+            "id_token_jwt": None,
+            "token_response": {
+                "access_token": token_json.get("token"),
+                "expires_in": 3599,
+                "refresh_token": token_json.get("refresh_token"),
+                "scope": "https://www.googleapis.com/auth/drive.file",
+                "token_type": "Bearer"
+            },
+            "scopes": token_json.get("scopes"),
+            "token_info_uri": "https://oauth2.googleapis.com/tokeninfo",
+            "invalid": False,
+            "_class": "OAuth2Credentials",
+            "_module": "oauth2client.client"
+        }
+
+        # Write the JSON locally inside .dvc-viewer for DVC to use
         viewer_dir = project_dir / ".dvc-viewer"
         viewer_dir.mkdir(parents=True, exist_ok=True)
         creds_file = viewer_dir / "gdrive_credentials.json"
-        creds_file.write_text(creds_data, encoding="utf-8")
+        token_file = viewer_dir / "gdrive_token.json"
 
-        # Ensure .dvc-viewer is in .gitignore to prevent accidental commits
+        creds_file.write_text(creds_data, encoding="utf-8")
+        token_file.write_text(json.dumps(legacy_token), encoding="utf-8")
+
+        # Add to .gitignore
         gitignore = project_dir / ".gitignore"
         ignore_line = ".dvc-viewer/\n"
         if gitignore.exists():
-            content = gitignore.read_text(encoding="utf-8")
-            if ".dvc-viewer" not in content:
-                gitignore.write_text(content + "\n" + ignore_line, encoding="utf-8")
+            git_content = gitignore.read_text(encoding="utf-8")
+            if ".dvc-viewer" not in git_content:
+                gitignore.write_text(git_content + "\n" + ignore_line, encoding="utf-8")
         else:
             gitignore.write_text(ignore_line, encoding="utf-8")
 
     except json.JSONDecodeError:
-        print("❌ Invalid JSON in DVC_GDRIVE_CREDENTIALS_DATA")
+        print("❌ Invalid JSON in DVC_GDRIVE_CREDENTIALS or DVC_GDRIVE_TOKEN")
         return
 
     from .dvc_client import resolve_dvc_bin
@@ -71,22 +100,21 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
     subprocess.run([dvc_bin, "remote", "add", "-d", "-f", "gdrive_remote", f"gdrive://{folder_id}"],
                    cwd=str(project_dir), capture_output=True)
 
-    # 2. Configure Service Account locally
-    if json.loads(creds_data).get("type") == "service_account":
-        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "true"], cwd=str(project_dir), capture_output=True)
-        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_service_account_json_file_path", str(creds_file)], cwd=str(project_dir), capture_output=True)
-    else:
-        # It is OAuth client id/secret
-        creds_json = json.loads(creds_data)
-        app_type = "installed" if "installed" in creds_json else "web"
-        client_id = creds_json[app_type]["client_id"]
-        client_secret = creds_json[app_type]["client_secret"]
-        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "false"], cwd=str(project_dir), capture_output=True)
-        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_client_id", client_id], cwd=str(project_dir), capture_output=True)
-        subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_client_secret", client_secret], cwd=str(project_dir), capture_output=True)
+    # 2. Configure OAuth Desktop locally
+    app_type = "installed" if "installed" in creds_json else "web"
+    client_id = creds_json.get(app_type, {}).get("client_id")
+    client_secret = creds_json.get(app_type, {}).get("client_secret")
 
+    if not client_id or not client_secret:
+        print("❌ Invalid OAuth credentials format.")
+        return
 
-    print("✅ Google Drive remote 'gdrive_remote' configured as default.")
+    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "false"], cwd=str(project_dir), capture_output=True)
+    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_client_id", client_id], cwd=str(project_dir), capture_output=True)
+    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_client_secret", client_secret], cwd=str(project_dir), capture_output=True)
+    subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_user_credentials_file", str(token_file)], cwd=str(project_dir), capture_output=True)
+
+    print("✅ Google Drive remote 'gdrive_remote' configured as default with OAuth.")
 
 def main() -> None:
     parser = argparse.ArgumentParser(

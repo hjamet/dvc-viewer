@@ -1,31 +1,21 @@
 import json
 import os
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import logging
 
 # Suppress googleapiclient warning about file_cache
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
-def discover_dvc_folder(creds_data: str) -> str | None:
+def discover_dvc_folder(token_data: str) -> str | None:
     """
     Scans Google Drive for a folder named exactly 'DVC' (or DVC_GDRIVE_WORKSPACE_NAME).
-    Returns the Folder ID if exactly one is found, otherwise asks the user or returns None.
+    Creates it if it doesn't exist.
+    Returns the Folder ID.
     """
     try:
-        creds_dict = json.loads(creds_data)
-
-        # Check if this is a service account or an OAuth2 installed app credentials
-        if creds_dict.get("type") == "service_account":
-            creds = service_account.Credentials.from_service_account_info(
-                creds_dict, scopes=['https://www.googleapis.com/auth/drive']
-            )
-        elif "installed" in creds_dict or "web" in creds_dict:
-            print("⚠️ OAuth2 client credentials detected. DVC folder auto-discovery requires a Service Account.")
-            return None
-        else:
-            print("⚠️ Unknown Google credentials format.")
-            return None
+        token_dict = json.loads(token_data)
+        creds = Credentials.from_authorized_user_info(token_dict, scopes=['https://www.googleapis.com/auth/drive.file'])
 
         service = build('drive', 'v3', credentials=creds)
 
@@ -36,31 +26,21 @@ def discover_dvc_folder(creds_data: str) -> str | None:
         results = service.files().list(q=query, spaces='drive', fields='files(id, name, parents)').execute()
         files = results.get('files', [])
 
-        if len(files) == 1:
+        if len(files) > 0:
             print(f"🎯 Discovered Google Drive folder '{folder_name}' with ID: {files[0]['id']}")
             return files[0]['id']
-        elif len(files) > 1:
-            print(f"⚠️ Multiple folders named '{folder_name}' found.")
-            for f in files:
-                print(f" - ID: {f['id']}, Name: {f['name']}")
-            print("Please specify the exact DVC_GDRIVE_FOLDER_ID.")
-            try:
-                folder_id = input("Enter Folder ID: ").strip()
-                if folder_id:
-                    return folder_id
-            except EOFError:
-                pass
         else:
-            print(f"⚠️ No folder named '{folder_name}' found in the authenticated Drive.")
-            print("Please create the folder, share it with the service account, and specify DVC_GDRIVE_FOLDER_ID.")
-            try:
-                folder_id = input("Enter Folder ID manually (or press Enter to skip): ").strip()
-                if folder_id:
-                    return folder_id
-            except EOFError:
-                pass
+            print(f"✨ Creating Google Drive folder '{folder_name}' at the root...")
+            file_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = service.files().create(body=file_metadata, fields='id').execute()
+            folder_id = folder.get('id')
+            print(f"✅ Folder '{folder_name}' created successfully with ID: {folder_id}")
+            return folder_id
 
     except Exception as e:
-        print(f"❌ Failed to discover Google Drive folder: {e}")
+        print(f"❌ Failed to discover or create Google Drive folder: {e}")
 
     return None

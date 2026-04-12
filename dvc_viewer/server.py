@@ -663,7 +663,7 @@ async def run_pipeline(request: Request):
                             subprocess.run(["git", "push"], cwd=str(_project_dir), capture_output=True)
 
                 # 2. Auto Push & GC
-                if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
+                if os.environ.get("DVC_GDRIVE_CREDENTIALS") and os.environ.get("DVC_GDRIVE_TOKEN") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
                     print("☁️ Auto-Pushing to Google Drive...")
                     push_res = subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True, text=True)
                     if push_res.returncode != 0:
@@ -727,7 +727,7 @@ async def run_pipeline_stream(
 
                     if res.returncode == 0:
                         # Auto-push DVC first so we never push a git commit referencing missing remote data
-                        if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
+                        if os.environ.get("DVC_GDRIVE_CREDENTIALS") and os.environ.get("DVC_GDRIVE_TOKEN") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
                             print(f"☁️ Auto-Pushing {stg_name} to Google Drive...")
                             push_res = subprocess.run([_dvc_bin, "push", stg_name], cwd=str(_project_dir), capture_output=True, text=True)
                             if push_res.returncode != 0:
@@ -898,7 +898,7 @@ async def run_pipeline_stream(
             def background_push():
                 try:
                     # Auto Push & GC
-                    if os.environ.get("DVC_GDRIVE_CREDENTIALS_DATA") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
+                    if os.environ.get("DVC_GDRIVE_CREDENTIALS") and os.environ.get("DVC_GDRIVE_TOKEN") and os.environ.get("DVC_GDRIVE_FOLDER_ID"):
                         print("☁️ Final Auto-Pushing to Google Drive...")
                         push_res = subprocess.run([_dvc_bin, "push"], cwd=str(_project_dir), capture_output=True, text=True)
                         if push_res.returncode != 0:

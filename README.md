@@ -69,43 +69,48 @@ The web interface opens automatically at [http://localhost:8686](http://localhos
 
 ## ☁️ Auto-Sync with Google Drive
 
-DVC-Viewer can automatically pull, push, and clean up your remote DVC data on Google Drive without any manual configuration or browser interaction. This is especially useful for "headless" environments like virtual machines or cloud agents.
+DVC-Viewer can automatically pull, push, and clean up your remote DVC data on Google Drive without any manual configuration. This is ideal for seamlessly transferring data from ephemeral VMs to your personal Drive.
 
-To enable this, you need a **Google Cloud Service Account** with access to your Drive folder.
+DVC-Viewer will automatically create a folder named `DVC` at the root of your Google Drive and push all artifacts there.
 
-### 1. Setup the Service Account
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and select/create a project.
-2. Enable the **Google Drive API** for the project.
-3. Go to **IAM & Admin > Service Accounts** and create a new Service Account (no specific roles are needed).
-4. Go to the keys for that Service Account, and **Create a new JSON key**. Download this file.
-5. Note the email address of the Service Account (e.g., `my-bot@project.iam.gserviceaccount.com`).
+### 1. Configure an OAuth 2.0 Client
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project.
+2. Enable the **Google Drive API**.
+3. Go to **APIs & Services > OAuth consent screen**.
+    - Configure the screen and add yourself as a Test User.
+    - **CRITICAL:** Once configured, set the Publishing status to **In production**. If left in "Testing", your refresh token will expire in 7 days, breaking the headless auto-push.
+    - Add the scope `https://www.googleapis.com/auth/drive.file`.
+4. Go to **APIs & Services > Credentials** > **Create Credentials** > **OAuth client ID**.
+    - Choose **Desktop app**.
+    - Download the resulting `client_secret_*.json` file.
 
-### 2. Share your Google Drive Folder
-1. Go to your Google Drive and create a folder for DVC data.
-2. Share this folder with the **Service Account email address** (granting "Editor" access).
-3. Copy the **Folder ID** from the URL (the part after `/folders/`).
-
-### 3. Run DVC-Viewer
-Set the following environment variables when running `dvc-viewer`:
-
-- `DVC_GDRIVE_FOLDER_ID`: The ID of your Drive folder.
-- `DVC_GDRIVE_CREDENTIALS_DATA`: The *raw content* of the JSON key file you downloaded.
-- `DVC_VIEWER_GIT_AUTO_COMMIT`: (Optional) Set to `0` or `false` to disable automatic git commits (enabled by default).
+### 2. Generate Your Tokens
+Run the provided setup script on your local machine (where you have a browser) to generate your Access and Refresh tokens:
 
 ```bash
-export DVC_GDRIVE_FOLDER_ID="1A2b3C4d5E6f7G8h9I0j"
-export DVC_GDRIVE_CREDENTIALS_DATA='{ "type": "service_account", "project_id": "...", ... }'
-export DVC_VIEWER_GIT_AUTO_COMMIT="false"
+pip install google-auth-oauthlib
+python scripts/setup_gdrive_auth.py
+```
+
+The script will ask you to paste your `client_secret` JSON, open a browser window for you to grant access, and then output two environment variables (`DVC_GDRIVE_CREDENTIALS` and `DVC_GDRIVE_TOKEN`).
+
+### 3. Run DVC-Viewer
+On your target machine (e.g., your VM or cluster), simply export the generated tokens before running `dvc-viewer`:
+
+```bash
+export DVC_GDRIVE_CREDENTIALS='{...}'
+export DVC_GDRIVE_TOKEN='{...}'
+export DVC_VIEWER_GIT_AUTO_COMMIT="false"  # (Optional) Set to false to disable git commits
 
 dvc-viewer
 ```
 
 **What it does automatically:**
-- Configures DVC to use Google Drive via the service account.
+- **Auto-Discovery/Creation:** Searches for a `DVC` folder at the root of your Drive and creates it if it doesn't exist.
 - **Auto-Pull:** Performs `dvc pull` silently before starting any pipeline execution.
-- **Auto Git Commit:** By default (unless `DVC_VIEWER_GIT_AUTO_COMMIT` is disabled), `dvc.yaml` and `dvc.lock` changes are automatically committed to git, capturing the state of the successful run.
-- **Auto-Push:** Performs `dvc push` in the background after a successful execution.
-- **Auto-Cleanup (GC):** Runs `dvc gc --cloud --workspace` in the background to delete old, unused data from Drive, saving space!
+- **Auto Git Commit:** By default (unless disabled), `dvc.yaml` and `dvc.lock` changes are automatically committed to Git.
+- **Auto-Push:** Performs `dvc push` in the background after a successful pipeline run.
+- **Auto-Cleanup (GC):** Runs `dvc gc --cloud --workspace` in the background to delete unused remote data.
 
 ## 🪝 Hooks
 
