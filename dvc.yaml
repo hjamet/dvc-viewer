@@ -1,0 +1,8 @@
+stages:
+  test:
+    cmd: export PYTHONPATH=$(pwd) && uv run pytest tests/
+    deps:
+      - dvc_viewer
+      - tests
+    outs:
+      - .pytest_cache
