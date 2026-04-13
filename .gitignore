@@ -37,3 +37,4 @@ Thumbs.db
 test_venv
 gdrive_venv
 /.pytest_cache
+fake_output.txt
