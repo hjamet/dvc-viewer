@@ -46,13 +46,19 @@ def setup_gdrive_workspace(project_dir: Path, creds_str: str, token_str: str) ->
     Returns the repository folder ID.
     """
     try:
+        creds_dict = json.loads(creds_str)
         token_dict = json.loads(token_str)
+
+        client_id = creds_dict.get("installed", {}).get("client_id") or creds_dict.get("web", {}).get("client_id", "")
+        client_secret = creds_dict.get("installed", {}).get("client_secret") or creds_dict.get("web", {}).get("client_secret", "")
+        token_uri = creds_dict.get("installed", {}).get("token_uri") or creds_dict.get("web", {}).get("token_uri", "https://oauth2.googleapis.com/token")
+
         creds = Credentials(
             token=token_dict.get("token"),
             refresh_token=token_dict.get("refresh_token"),
-            token_uri=token_dict.get("token_uri"),
-            client_id=token_dict.get("client_id"),
-            client_secret=token_dict.get("client_secret"),
+            token_uri=token_dict.get("token_uri") or token_uri,
+            client_id=token_dict.get("client_id") or client_id,
+            client_secret=token_dict.get("client_secret") or client_secret,
             scopes=token_dict.get("scopes", ["https://www.googleapis.com/auth/drive.file"])
         )
         service = build('drive', 'v3', credentials=creds)
