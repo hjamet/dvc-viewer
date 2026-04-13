@@ -1,0 +1,9 @@
+schema: '2.0'
+stages:
+  generate_fake_output:
+    cmd: echo "Fake research output generated at $(date)" > fake_output.txt
+    outs:
+    - path: fake_output.txt
+      hash: md5
+      md5: 55cdb1793f81c3d3c90c52c69d44249a
+      size: 63

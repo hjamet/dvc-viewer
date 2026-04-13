@@ -1,12 +1,36 @@
 import os
 import sys
 import json
+import subprocess
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import logging
 
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
+
+def setup_and_push():
+    """Sets up the DVC Google Drive remote and pushes the fake_output.txt"""
+    print("⚙️ Setting up DVC Google Drive remote...")
+    try:
+        from dvc_viewer.cli import _setup_gdrive_sync
+        from dvc_viewer.dvc_client import resolve_dvc_bin
+
+        project_dir = Path.cwd()
+        _setup_gdrive_sync(project_dir)
+        dvc_bin = resolve_dvc_bin(project_dir)
+
+        print("☁️ Pushing 'fake_output.txt' to Google Drive...")
+        result = subprocess.run([dvc_bin, "push", "fake_output.txt"], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"❌ Failed to push data using '{dvc_bin} push fake_output.txt'.")
+            print(f"Stdout: {result.stdout}")
+            print(f"Stderr: {result.stderr}")
+            sys.exit(1)
+        print("✅ Push completed successfully.")
+    except Exception as e:
+        print(f"❌ Error during DVC remote setup or push: {e}")
+        sys.exit(1)
 
 def verify_gdrive():
     creds_str = os.environ.get("DVC_GDRIVE_CREDENTIALS")
@@ -85,4 +109,5 @@ def verify_gdrive():
         sys.exit(1)
 
 if __name__ == "__main__":
+    setup_and_push()
     verify_gdrive()

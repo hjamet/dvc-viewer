@@ -6,7 +6,7 @@ stages:
       - fake_output.txt
 
   verify_gdrive_sync:
-    cmd: dvc push fake_output.txt && python3 scripts/verify_gdrive.py
+    cmd: python3 scripts/verify_gdrive.py
     deps:
       - fake_output.txt
       - scripts/verify_gdrive.py
