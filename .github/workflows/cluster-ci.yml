@@ -1,0 +1,41 @@
+name: Cluster-CI Execution
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  execute-on-cluster:
+    name: Execute Research Pipeline
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Orchestrator
+        run: /usr/local/bin/cluster-ci-run "${{ github.repository }}" "${{ github.head_ref || github.ref_name }}" "${{ secrets.GITHUB_TOKEN }}"
+        env:
+          DVC_GDRIVE_CREDENTIALS: ${{ secrets.DVC_GDRIVE_CREDENTIALS }}
+          DVC_GDRIVE_TOKEN: ${{ secrets.DVC_GDRIVE_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Google Drive Sync
+        env:
+          DVC_GDRIVE_CREDENTIALS: ${{ secrets.DVC_GDRIVE_CREDENTIALS }}
+          DVC_GDRIVE_TOKEN: ${{ secrets.DVC_GDRIVE_TOKEN }}
+        run: |
+          pip install google-auth google-api-python-client
+          python scripts/verify_gdrive_sync.py
