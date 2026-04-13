@@ -1,5 +1,6 @@
 import json
 import os
+import ast
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -38,6 +39,13 @@ def convert_to_oauth2client(creds_data: dict, token_data: dict) -> dict:
         "_module": "oauth2client.client"
     }
 
+def _parse_json_str(s: str) -> dict:
+    """Robust JSON parser that falls back to ast.literal_eval for python dict strings."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return ast.literal_eval(s)
+
 def setup_gdrive_workspace(project_dir: Path, creds_str: str, token_str: str) -> str | None:
     """
     Sets up the GDrive workspace:
@@ -46,8 +54,8 @@ def setup_gdrive_workspace(project_dir: Path, creds_str: str, token_str: str) ->
     Returns the repository folder ID.
     """
     try:
-        creds_dict = json.loads(creds_str)
-        token_dict = json.loads(token_str)
+        creds_dict = _parse_json_str(creds_str)
+        token_dict = _parse_json_str(token_str)
 
         client_id = creds_dict.get("installed", {}).get("client_id") or creds_dict.get("web", {}).get("client_id", "")
         client_secret = creds_dict.get("installed", {}).get("client_secret") or creds_dict.get("web", {}).get("client_secret", "")

@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import subprocess
+import ast
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -32,6 +33,13 @@ def setup_and_push():
         print(f"❌ Error during DVC remote setup or push: {e}")
         sys.exit(1)
 
+def _parse_json_str(s: str) -> dict:
+    """Robust JSON parser that falls back to ast.literal_eval for python dict strings."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return ast.literal_eval(s)
+
 def verify_gdrive():
     creds_str = os.environ.get("DVC_GDRIVE_CREDENTIALS")
     token_str = os.environ.get("DVC_GDRIVE_TOKEN")
@@ -42,8 +50,8 @@ def verify_gdrive():
         sys.exit(1)
 
     try:
-        creds_dict = json.loads(creds_str)
-        token_dict = json.loads(token_str)
+        creds_dict = _parse_json_str(creds_str)
+        token_dict = _parse_json_str(token_str)
 
         client_id = creds_dict.get("installed", {}).get("client_id") or creds_dict.get("web", {}).get("client_id", "")
         client_secret = creds_dict.get("installed", {}).get("client_secret") or creds_dict.get("web", {}).get("client_secret", "")
