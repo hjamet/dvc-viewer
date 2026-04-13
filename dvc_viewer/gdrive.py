@@ -79,7 +79,8 @@ def setup_gdrive_workspace(project_dir: Path, creds_str: str, token_str: str) ->
             print(f"📁 Creating root Google Drive folder '{root_folder_name}'...")
             file_metadata = {
                 'name': root_folder_name,
-                'mimeType': 'application/vnd.google-apps.folder'
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': ['root']
             }
             folder = service.files().create(body=file_metadata, fields='id').execute()
             root_folder_id = folder.get('id')

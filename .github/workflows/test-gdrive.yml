@@ -1,0 +1,39 @@
+name: GDrive CI Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-gdrive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+          uv pip install --system -e .
+          uv pip install --system dvc[gdrive] pytest google-api-python-client
+
+      - name: Run GDrive CI Test
+        env:
+          DVC_GDRIVE_CREDENTIALS: ${{ secrets.DVC_GDRIVE_CREDENTIALS }}
+          DVC_GDRIVE_TOKEN: ${{ secrets.DVC_GDRIVE_TOKEN }}
+          PYTHONPATH: .
+        run: |
+          if [ -z "$DVC_GDRIVE_CREDENTIALS" ]; then
+            echo "Failing GDrive CI Test because secrets are not set."
+            exit 1
+          fi
+          uv run pytest tests/test_gdrive_ci.py -v
