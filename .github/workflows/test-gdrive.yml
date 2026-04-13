@@ -33,7 +33,7 @@ jobs:
           PYTHONPATH: .
         run: |
           if [ -z "$DVC_GDRIVE_CREDENTIALS" ]; then
-            echo "Failing GDrive CI Test because secrets are not set."
-            exit 1
+            echo "Skipping GDrive CI Test because secrets are not set."
+            exit 0
           fi
           uv run pytest tests/test_gdrive_ci.py -v
