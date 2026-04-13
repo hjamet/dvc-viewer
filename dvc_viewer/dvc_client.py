@@ -39,6 +39,41 @@ def resolve_dvc_bin(project_dir: str | Path) -> str:
         return str(own_venv)
     return "dvc"
 
+def install_dvc_gdrive(dvc_bin: str) -> bool:
+    """Silently install dvc[gdrive] into the same python environment as the dvc_bin."""
+    # 1. Try resolving the python executable for the dvc binary
+    # dvc_bin might be in a venv, so checking `dvc_bin.parent / "python"` works
+    dvc_path = Path(dvc_bin)
+    python_bin = dvc_path.parent / "python"
+
+    # If python executable is not next to dvc_bin, assume dvc is installed system-wide or we are using sys.executable
+    if not python_bin.exists():
+        # Let's try system python
+        res = subprocess.run([sys.executable, "-c", "import dvc_gdrive"], capture_output=True)
+        if res.returncode == 0:
+            return True
+
+        print("📦 Installing dvc[gdrive] dependency...")
+        uv_bin = shutil.which("uv")
+        if uv_bin:
+            res = subprocess.run([uv_bin, "pip", "install", "dvc[gdrive]", "--python", sys.executable], capture_output=True)
+        else:
+            res = subprocess.run([sys.executable, "-m", "pip", "install", "dvc[gdrive]"], capture_output=True)
+        return res.returncode == 0
+
+    # Check if installed
+    res = subprocess.run([str(python_bin), "-c", "import dvc_gdrive"], capture_output=True)
+    if res.returncode == 0:
+        return True
+
+    print("📦 Installing dvc[gdrive] dependency...")
+    # Try to use uv if available, otherwise pip
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        res = subprocess.run([uv_bin, "pip", "install", "dvc[gdrive]", "--python", str(python_bin)], capture_output=True)
+    else:
+        res = subprocess.run([str(python_bin), "-m", "pip", "install", "dvc[gdrive]"], capture_output=True)
+    return res.returncode == 0
 
 def safe_read_rwlock(rwlock_path: Path) -> dict | None:
     """Read and parse the rwlock JSON file directly, with retries and cleanup."""

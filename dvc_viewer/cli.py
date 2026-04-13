@@ -23,18 +23,40 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
     if not creds_data or not token_data:
         return
 
-    print("🔍 Searching for Google Drive DVC workspace...")
-    try:
-        from .gdrive import setup_gdrive_workspace, convert_to_oauth2client
-        folder_id = setup_gdrive_workspace(project_dir, creds_data, token_data)
-        if folder_id:
-            os.environ["DVC_GDRIVE_FOLDER_ID"] = folder_id
-        else:
-            print("❌ Could not determine Google Drive Folder ID. Auto-Sync disabled.")
+    from .dvc_client import resolve_dvc_bin, install_dvc_gdrive
+    dvc_bin = resolve_dvc_bin(project_dir)
+
+    install_dvc_gdrive(dvc_bin)
+
+    # Check if remote already exists
+    remote_list = subprocess.run([dvc_bin, "remote", "list"], cwd=str(project_dir), capture_output=True, text=True)
+    remote_exists = False
+    existing_folder_id = None
+    if remote_list.returncode == 0:
+        for line in remote_list.stdout.splitlines():
+            if line.startswith("gdrive_remote\t"):
+                remote_exists = True
+                parts = line.split("\t")
+                if len(parts) > 1 and parts[1].startswith("gdrive://"):
+                    existing_folder_id = parts[1][9:]
+                break
+
+    folder_id = existing_folder_id
+
+    if not remote_exists:
+        print("🔍 Searching for Google Drive DVC workspace...")
+        try:
+            from .gdrive import setup_gdrive_workspace, convert_to_oauth2client
+            folder_id = setup_gdrive_workspace(project_dir, creds_data, token_data)
+            if not folder_id:
+                print("❌ Could not determine Google Drive Folder ID. Auto-Sync disabled.")
+                return
+        except ImportError:
+            print("⚠️ Google API client libraries not installed. Please install them to use Drive auto-discovery.")
             return
-    except ImportError:
-        print("⚠️ Google API client libraries not installed. Please install them to use Drive auto-discovery.")
-        return
+
+    if folder_id:
+        os.environ["DVC_GDRIVE_FOLDER_ID"] = folder_id
 
     print("☁️  Configuring Google Drive Auto-Sync...")
 
@@ -48,6 +70,7 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
         viewer_dir = project_dir / ".dvc-viewer"
         viewer_dir.mkdir(parents=True, exist_ok=True)
 
+        from .gdrive import convert_to_oauth2client
         # Write legacy oauth2client token for pydrive2
         legacy_token = convert_to_oauth2client(creds_dict, token_dict)
         creds_file = viewer_dir / "gdrive_token.json"
@@ -67,12 +90,10 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
         print("❌ Invalid JSON in DVC_GDRIVE_CREDENTIALS or DVC_GDRIVE_TOKEN")
         return
 
-    from .dvc_client import resolve_dvc_bin
-    dvc_bin = resolve_dvc_bin(project_dir)
-
-    # 1. Add remote
-    subprocess.run([dvc_bin, "remote", "add", "-d", "-f", "gdrive_remote", f"gdrive://{folder_id}"],
-                   cwd=str(project_dir), capture_output=True)
+    # 1. Add remote if it doesn't exist
+    if not remote_exists and folder_id:
+        subprocess.run([dvc_bin, "remote", "add", "-d", "-f", "gdrive_remote", f"gdrive://{folder_id}"],
+                       cwd=str(project_dir), capture_output=True)
 
     # 2. Configure OAuth token locally
     subprocess.run([dvc_bin, "remote", "modify", "--local", "gdrive_remote", "gdrive_use_service_account", "false"],
