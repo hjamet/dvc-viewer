@@ -7,7 +7,7 @@ set -euo pipefail
 
 INSTALL_DIR="$HOME/.dvc-viewer"
 BIN_DIR="$HOME/.local/bin"
-REPO_URL="https://github.com/hjamet/dvc-viewer.git"
+REPO_URL="https://github.com/UNIL-Henri/dvc-viewer.git"
 
 echo ""
 echo "  🔍 DVC Viewer — Installer"

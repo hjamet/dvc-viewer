@@ -27,7 +27,7 @@
 ## 🚀 Quick Install
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/hjamet/dvc-viewer/main/install.sh?$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/UNIL-Henri/dvc-viewer/main/install.sh?$(date +%s)" | bash
 ```
 
 This will:
@@ -38,7 +38,7 @@ This will:
 ## 📦 Manual Install
 
 ```bash
-git clone https://github.com/hjamet/dvc-viewer.git ~/.dvc-viewer
+git clone https://github.com/UNIL-Henri/dvc-viewer.git ~/.dvc-viewer
 cd ~/.dvc-viewer
 python3 -m venv .venv
 source .venv/bin/activate
@@ -105,6 +105,9 @@ dvc-viewer
 - **Auto Git Commit:** By default (unless `DVC_VIEWER_GIT_AUTO_COMMIT` is disabled), `dvc.yaml` and `dvc.lock` changes are automatically committed to git, capturing the state of the successful run.
 - **Auto-Push:** Performs `dvc push` in the background after a successful execution.
 - **Auto-Cleanup (GC):** Runs `dvc gc --cloud --workspace` in the background to delete old, unused data from Drive, saving space!
+
+### Continuous Integration (CI)
+A dedicated CI pipeline (`test-gdrive.yml`) continuously validates this Google Drive synchronization mechanism on every push and pull request. It ensures that DVC properly pushes data to the configured Google Drive space and that the data is correctly retrieved via the Drive API.
 
 ## 🪝 Hooks
 

@@ -219,13 +219,13 @@ if ! command -v dvc-viewer >/dev/null 2>&1; then
     if command -v uv >/dev/null 2>&1; then
         # Try installing in the current virtual environment, or system if none found
         if [ -n "${VIRTUAL_ENV:-}" ]; then
-            uv pip install --quiet git+https://github.com/hjamet/dvc-viewer.git
+            uv pip install --quiet git+https://github.com/UNIL-Henri/dvc-viewer.git
         else
-            uv pip install --system --quiet git+https://github.com/hjamet/dvc-viewer.git
+            uv pip install --system --quiet git+https://github.com/UNIL-Henri/dvc-viewer.git
         fi
     else
         # Fallback to pip
-        pip install --quiet git+https://github.com/hjamet/dvc-viewer.git
+        pip install --quiet git+https://github.com/UNIL-Henri/dvc-viewer.git
     fi
 fi
 """
