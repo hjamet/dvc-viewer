@@ -56,9 +56,9 @@ def install_dvc_gdrive(dvc_bin: str) -> bool:
         print("📦 Installing dvc[gdrive] dependency...")
         uv_bin = shutil.which("uv")
         if uv_bin:
-            res = subprocess.run([uv_bin, "pip", "install", "dvc-gdrive", "--python", sys.executable], capture_output=True)
+            res = subprocess.run([uv_bin, "pip", "install", "dvc[gdrive]", "--python", sys.executable], capture_output=True)
         else:
-            res = subprocess.run([sys.executable, "-m", "pip", "install", "dvc-gdrive"], capture_output=True)
+            res = subprocess.run([sys.executable, "-m", "pip", "install", "dvc[gdrive]"], capture_output=True)
         return res.returncode == 0
 
     # Check if installed
