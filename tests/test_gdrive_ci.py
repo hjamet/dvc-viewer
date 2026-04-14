@@ -1,12 +1,9 @@
 import os
+import sys
 import pytest
 from pathlib import Path
 from dvc_viewer.gdrive import setup_gdrive_workspace
 
-@pytest.mark.skipif(
-    not os.environ.get("DVC_GDRIVE_CREDENTIALS") or not os.environ.get("DVC_GDRIVE_TOKEN"),
-    reason="DVC_GDRIVE_CREDENTIALS and DVC_GDRIVE_TOKEN must be set to run Google Drive integration tests"
-)
 def test_setup_gdrive_workspace_creates_folders(tmp_path: Path):
     """
     Integration test to verify that setup_gdrive_workspace correctly communicates
@@ -15,6 +12,10 @@ def test_setup_gdrive_workspace_creates_folders(tmp_path: Path):
     """
     creds_str = os.environ.get("DVC_GDRIVE_CREDENTIALS")
     token_str = os.environ.get("DVC_GDRIVE_TOKEN")
+
+    if not creds_str or not token_str:
+        print("❌ DVC_GDRIVE_CREDENTIALS and DVC_GDRIVE_TOKEN must be set to run Google Drive integration tests.")
+        sys.exit(1)
 
     # Use a unique name for the mock project directory
     project_dir = tmp_path / "test_dvc_viewer_repo_12345"

@@ -12,41 +12,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Run Pytest & GDrive Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: "pyproject.toml"
-
-      - name: Install dependencies
-        run: uv pip install --system -e . pytest
-
-      - name: Run Pytest
-        env:
-          DVC_GDRIVE_CREDENTIALS: ${{ secrets.DVC_GDRIVE_CREDENTIALS }}
-          DVC_GDRIVE_TOKEN: ${{ secrets.DVC_GDRIVE_TOKEN }}
-        run: pytest tests/ -v
-
   execute-on-cluster:
     name: Execute Research Pipeline
-    needs: test
     runs-on: self-hosted
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Run Pytest
+        env:
+          DVC_GDRIVE_CREDENTIALS: ${{ secrets.DVC_GDRIVE_CREDENTIALS }}
+          DVC_GDRIVE_TOKEN: ${{ secrets.DVC_GDRIVE_TOKEN }}
+        run: |
+          # Install dependencies and pytest if needed, then run tests
+          uv pip install --system -e . pytest || true
+          uv run pytest tests/ -v
 
       - name: Run Orchestrator
         run: /usr/local/bin/cluster-ci-run "${{ github.repository }}" "${{ github.head_ref || github.ref_name }}" "${{ secrets.GITHUB_TOKEN }}"
