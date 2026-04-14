@@ -43,10 +43,15 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
                 if len(parts) > 1 and parts[1].startswith("gdrive://"):
                     existing_folder_id = parts[1][9:]
                 break
+    else:
+        # If DVC fails to list remotes due to a broken gdrive_remote config, we try to remove it
+        subprocess.run([dvc_bin, "remote", "remove", "--local", "gdrive_remote"], cwd=str(project_dir), capture_output=True)
+        subprocess.run([dvc_bin, "remote", "remove", "gdrive_remote"], cwd=str(project_dir), capture_output=True)
+
 
     folder_id = existing_folder_id
 
-    if not remote_exists:
+    if not folder_id:
         print("🔍 Searching for Google Drive DVC workspace...")
         try:
             from .gdrive import setup_gdrive_workspace, convert_to_oauth2client
@@ -93,8 +98,8 @@ def _setup_gdrive_sync(project_dir: Path) -> None:
         print("❌ Invalid JSON in DVC_GDRIVE_CREDENTIALS or DVC_GDRIVE_TOKEN")
         return
 
-    # 1. Add remote if it doesn't exist
-    if not remote_exists and folder_id:
+    # 1. Add remote if we don't have one or if we needed to discover/re-add the folder_id
+    if folder_id and folder_id != existing_folder_id:
         subprocess.run([dvc_bin, "remote", "add", "-d", "-f", "gdrive_remote", f"gdrive://{folder_id}"],
                        cwd=str(project_dir), capture_output=True)
     elif not remote_exists and not folder_id:
