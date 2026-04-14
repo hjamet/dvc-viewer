@@ -75,10 +75,17 @@ _PDF_EXTENSIONS = {".pdf"}
 _TEXT_EXTENSIONS = {".json", ".yaml", ".yml", ".txt", ".md", ".log", ".jsonl"}
 
 
-def _safe_resolve(rel_path: str, require_exists: bool = True) -> Path | None:
+def _safe_resolve(rel_path: str | None, require_exists: bool = True) -> Path | None:
     """Resolve a relative path safely within the project directory."""
-    project = Path(_project_dir).resolve()
-    target = (project / rel_path).resolve()
+    if not rel_path:
+        return None
+
+    try:
+        project = Path(_project_dir).resolve()
+        target = (project / rel_path).resolve()
+    except (ValueError, TypeError):
+        return None
+
     # Prevent path traversal
     if not str(target).startswith(str(project)):
         return None
