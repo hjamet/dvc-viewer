@@ -18,8 +18,13 @@ def _parse_json_str(s: str) -> dict:
     except Exception:
         import yaml
         import re
-        # Try to fix {key:value} to {key: value} for yaml
-        s_yaml = re.sub(r'([{,])\s*([a-zA-Z0-9_]+):([^\s])', r'\1 \2: \3', s)
+        # Try to fix {key:value} to {key: value} for yaml, multiple times to catch all
+        s_yaml = s
+        prev = ""
+        while s_yaml != prev:
+            prev = s_yaml
+            s_yaml = re.sub(r'([{,\s])([a-zA-Z0-9_]+):([^\s])', r'\1\2: \3', s_yaml)
+
         try:
             res = yaml.safe_load(s_yaml)
             if isinstance(res, dict):
