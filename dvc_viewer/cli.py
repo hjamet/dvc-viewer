@@ -116,7 +116,7 @@ def main() -> None:
     )
     # Subcommand for internal hashing
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
-    hash_parser = subparsers.add_parser("hash", help="Compute hashes internal command")
+    subparsers.add_parser("hash", help="Compute hashes internal command")
 
     args = parser.parse_args()
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 import yaml
 from pathlib import Path
 from typing import Any
@@ -289,7 +288,8 @@ fi
                 hash_dep = f".dvc-viewer/hashes/{name}@${{{var_name}}}.hash"
                 
                 current_deps = do_block.get("deps", [])
-                if current_deps is None: current_deps = []
+                if current_deps is None:
+                    current_deps = []
                 
                 if not any((isinstance(d, str) and ".dvc-viewer/hashes/" in d) or (isinstance(d, dict) and any(".dvc-viewer/hashes/" in k for k in d)) for d in current_deps):
                     print(f"   🔗 Adding dependency to '{name}' (foreach): {hash_dep}")

@@ -7,17 +7,20 @@ a DAG model with per-stage state information.
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import shutil
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .dvc_client import (
+    get_dvc_status,
+    detect_running_stage,
+    StageFiles,
+)
+from .git_client import git_show_file
 
 # Cache the last successful dvc status result for use during pipeline runs
 # (when dvc status can't be called because the lock is held).
@@ -25,14 +28,6 @@ _last_dvc_status: dict[str, Any] | None = None
 
 # Track stages that failed during a run (since DVC status might not reflect this immediately)
 _failed_stages: set[str] = set()
-
-from .dvc_client import (
-    resolve_dvc_bin,
-    get_dvc_status,
-    detect_running_stage,
-    StageFiles,
-)
-from .git_client import git_show_file
 
 # Snapshot of dvc.lock at the beginning of a run to detect completed stages by diffing hashes
 _dvc_lock_snapshot: dict[str, dict[str, Any]] | None = None
@@ -395,7 +390,8 @@ def _check_stage_hashes_on_disk(
 
     # Check dependencies
     for path_str, expected_md5 in stage_lock_info.get("deps", {}).items():
-        if ":" in path_str: continue # Skip params in deps if any
+        if ":" in path_str:
+            continue # Skip params in deps if any
         full_path = project_dir / path_str
         if not full_path.exists():
             return False
@@ -522,7 +518,8 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
             all_files.append(stage.hydra_config)
             
         for f in all_files:
-            if ":" in f: continue
+            if ":" in f:
+                continue
             full_path = project_dir / f
             if not full_path.exists():
                 stage.state = "needs_rerun"
@@ -582,7 +579,8 @@ def build_pipeline(project_dir: str | Path) -> Pipeline:
     queue = list(dirty)
     while queue:
         current = queue.pop(0)
-        if current in visited: continue
+        if current in visited:
+            continue
         visited.add(current)
         for child in downstream.get(current, []):
             child_stage = pipeline.stages.get(child)

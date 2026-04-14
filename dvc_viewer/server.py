@@ -14,11 +14,10 @@ import json
 import mimetypes
 import os
 import re
-import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response, StreamingResponse
@@ -753,7 +752,13 @@ async def run_pipeline_stream(
         try:
             from .dvc_client import _auto_pull
             _auto_pull(_project_dir, _dvc_bin)
-            proc = start_dvc_repro(_project_dir, _dvc_bin, stage, force, keep_going)
+
+            # Ensure .dvc-viewer dir exists for logs
+            viewer_dir = Path(_project_dir) / ".dvc-viewer"
+            viewer_dir.mkdir(parents=True, exist_ok=True)
+            log_file_path = viewer_dir / "repro.log"
+
+            proc = start_dvc_repro(_project_dir, _dvc_bin, stage, force, keep_going, log_file=log_file_path)
             _running_proc = proc
         except FileNotFoundError:
             yield sse_event("done", {

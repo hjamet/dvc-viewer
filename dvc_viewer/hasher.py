@@ -11,11 +11,8 @@ import ast
 import copy
 import hashlib
 import logging
-import os
 import symtable
-import sys
 from pathlib import Path
-from typing import Set, Tuple, Dict, Any
 
 # Setup logging
 logger = logging.getLogger("dvc_viewer.hasher")
