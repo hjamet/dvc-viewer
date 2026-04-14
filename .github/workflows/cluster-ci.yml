@@ -26,9 +26,12 @@ jobs:
           DVC_GDRIVE_CREDENTIALS: ${{ secrets.DVC_GDRIVE_CREDENTIALS }}
           DVC_GDRIVE_TOKEN: ${{ secrets.DVC_GDRIVE_TOKEN }}
         run: |
-          # Install dependencies and pytest if needed, then run tests
-          uv pip install --system -e . pytest || true
-          uv run pytest tests/ -v
+          # Setup isolated environment and run tests
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e . pytest
+          export PYTHONPATH=$(pwd)
+          pytest tests/ -v
 
       - name: Run Orchestrator
         run: /usr/local/bin/cluster-ci-run "${{ github.repository }}" "${{ github.head_ref || github.ref_name }}" "${{ secrets.GITHUB_TOKEN }}"
