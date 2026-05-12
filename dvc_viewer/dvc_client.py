@@ -132,7 +132,7 @@ def is_dvc_process_alive(pid: int) -> bool:
                     cmdline_raw = f.read()
                 cmdline_parts = cmdline_raw.decode("utf-8", errors="replace").split("\x00")
                 has_dvc = any("dvc" in part and "dvc-viewer" not in part for part in cmdline_parts)
-                has_repro = "repro" in cmdline_parts
+                has_repro = any("repro" in part for part in cmdline_parts)
                 if not (has_dvc and has_repro):
                     return False
         except OSError:
