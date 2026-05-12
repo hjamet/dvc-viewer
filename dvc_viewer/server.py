@@ -110,6 +110,10 @@ async def get_pipeline(force_refresh: bool = Query(False, description="Bypass ca
     try:
         pipeline = await asyncio.to_thread(build_pipeline, _project_dir)
         data = pipeline_to_dict(pipeline)
+        
+        # Disable execution controls when running in Cluster-CI
+        data["read_only"] = os.environ.get("CLUSTER_CI_MODE") == "executor"
+        
         _pipeline_cache = data
         _pipeline_cache_time = now
         return JSONResponse(content=data)
