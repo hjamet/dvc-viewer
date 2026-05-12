@@ -2101,7 +2101,7 @@
 
             // ─── Fetch pipeline data ───
             async function fetchPipeline() {
-                const res = await fetch('/api/pipeline');
+                const res = await fetch('api/pipeline');
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 return await res.json();
             }
@@ -2462,7 +2462,7 @@
 
                     async function loadHydraParams(configPath, container) {
                         try {
-                            const res = await fetch(`/api/hydra-config?path=${encodeURIComponent(configPath)}`);
+                            const res = await fetch(`api/hydra-config?path=${encodeURIComponent(configPath)}`);
                             const result = await res.json();
                             if (result.error) {
                                 container.innerHTML = `<div class="hydra-loading" style="color:#ef4444;">❌ ${escapeHtml(result.error)}</div>`;
@@ -2642,7 +2642,7 @@
                                 status.textContent = '';
 
                                 try {
-                                    const putRes = await fetch('/api/hydra-config', {
+                                    const putRes = await fetch('api/hydra-config', {
                                         method: 'PUT',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify({ path: configPath, params: changedParams }),
@@ -2761,7 +2761,7 @@
                     newBtn.querySelector('.freeze-text').textContent = 'Updating...';
 
                     try {
-                        const res = await fetch('/api/stage/freeze', {
+                        const res = await fetch('api/stage/freeze', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ stage: data.id, frozen: !isFrozen }),
@@ -3156,7 +3156,7 @@
 
                     // Load commit list for navigation
                     try {
-                        const cRes = await fetch('/api/commits?limit=100');
+                        const cRes = await fetch('api/commits?limit=100');
                         const cData = await cRes.json();
                         _commitList = cData.commits || [];
                         if (_commitList.length > 0) {
@@ -3194,7 +3194,7 @@
 
             async function loadFileHistory(filePath) {
                 try {
-                    const res = await fetch(`/api/file/history?path=${encodeURIComponent(filePath)}`);
+                    const res = await fetch(`api/file/history?path=${encodeURIComponent(filePath)}`);
                     const data = await res.json();
                     _versionHistory = data.commits || [];
                 } catch {
@@ -3271,7 +3271,7 @@
                     const commit = _versionHistory[_versionIndex].hash;
 
                     if (fileType === 'csv') {
-                        const res = await fetch(`/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}`);
+                        const res = await fetch(`api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}`);
                         const data = await res.json();
                         if (data.error) { body.innerHTML = `<div class="file-not-found"><div class="file-not-found-icon">🕰️</div><div class="file-not-found-text">${data.error}</div></div>`; return; }
                         // Render CSV from historical data
@@ -3285,9 +3285,9 @@
                         stats.textContent = `${data.total} rows · ${data.columns.length} cols`;
                         renderCSVTable('');
                     } else if (fileType === 'image') {
-                        body.innerHTML = `<div class="image-viewer"><img src="/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}" alt="${filePath}"></div>`;
+                        body.innerHTML = `<div class="image-viewer"><img src="api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}" alt="${filePath}"></div>`;
                     } else if (fileType === 'text') {
-                        const res = await fetch(`/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}`);
+                        const res = await fetch(`api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}`);
                         const data = await res.json();
                         if (data.error) { body.innerHTML = `<div class="file-not-found"><div class="file-not-found-icon">🕰️</div><div class="file-not-found-text">${data.error}</div></div>`; return; }
                         if (filePath.endsWith('.json')) {
@@ -3299,7 +3299,7 @@
                             body.innerHTML = `<div class="text-viewer">${escapeHtml(data.content)}</div>`;
                         }
                     } else if (fileType === 'pdf') {
-                        body.innerHTML = `<div class="pdf-viewer"><iframe src="/api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}"></iframe></div>`;
+                        body.innerHTML = `<div class="pdf-viewer"><iframe src="api/file/at-commit?path=${encodeURIComponent(filePath)}&commit=${commit}"></iframe></div>`;
                     } else {
                         body.innerHTML = '<div class="file-not-found"><div class="file-not-found-icon">📦</div><div class="file-not-found-text">Preview not available for this version</div></div>';
                     }
@@ -3337,7 +3337,7 @@
                     const _historyCommit = _isHistoryMode ? _commitList[_commitIndex]?.hash : null;
 
                     const [infoRes, _] = await Promise.all([
-                        fetch(`/api/file/info?path=${encodeURIComponent(filePath)}`),
+                        fetch(`api/file/info?path=${encodeURIComponent(filePath)}`),
                         loadFileHistory(filePath),
                     ]);
                     const info = await infoRes.json();
@@ -3407,7 +3407,7 @@
                 const search = document.getElementById('modal-search');
                 const stats = document.getElementById('modal-stats');
 
-                const res = await fetch(`/api/file/csv?path=${encodeURIComponent(filePath)}`);
+                const res = await fetch(`api/file/csv?path=${encodeURIComponent(filePath)}`);
                 _csvData = await res.json();
                 _csvSortCol = null;
                 _csvSortAsc = true;
@@ -3487,19 +3487,19 @@
             // ─── Image Renderer ───
             function renderImage(filePath) {
                 const body = document.getElementById('modal-body');
-                body.innerHTML = `<div class="image-viewer"><img src="/api/file/raw?path=${encodeURIComponent(filePath)}" alt="${filePath}"></div>`;
+                body.innerHTML = `<div class="image-viewer"><img src="api/file/raw?path=${encodeURIComponent(filePath)}" alt="${filePath}"></div>`;
             }
 
             // ─── PDF Renderer ───
             function renderPDF(filePath) {
                 const body = document.getElementById('modal-body');
-                body.innerHTML = `<div class="pdf-viewer"><iframe src="/api/file/raw?path=${encodeURIComponent(filePath)}"></iframe></div>`;
+                body.innerHTML = `<div class="pdf-viewer"><iframe src="api/file/raw?path=${encodeURIComponent(filePath)}"></iframe></div>`;
             }
 
             // ─── Text Renderer ───
             async function renderText(filePath) {
                 const body = document.getElementById('modal-body');
-                const res = await fetch(`/api/file/text?path=${encodeURIComponent(filePath)}`);
+                const res = await fetch(`api/file/text?path=${encodeURIComponent(filePath)}`);
                 const data = await res.json();
 
                 if (filePath.endsWith('.json')) {
@@ -3745,7 +3745,7 @@
                 showToast(label, 'running');
 
                 // Build SSE URL
-                let url = '/api/run-stream?';
+                let url = 'api/run-stream?';
                 if (stage) url += `stage=${encodeURIComponent(stage)}&`;
                 url += 'force=false';
 
@@ -3914,7 +3914,7 @@
             // Stop button
             document.getElementById('btn-stop').addEventListener('click', async () => {
                 try {
-                    await fetch('/api/stop', { method: 'POST' });
+                    await fetch('api/stop', { method: 'POST' });
                     // Immediately stop all animations and reset UI state
                     if (cy) cy.nodes().forEach(n => {
                         if (n.scratch('_animating')) {
@@ -3992,7 +3992,7 @@
 
                     const commit = _commitList[index];
                     try {
-                        const res = await fetch(`/api/pipeline/at-commit?commit=${commit.hash}`);
+                        const res = await fetch(`api/pipeline/at-commit?commit=${commit.hash}`);
                         const data = await res.json();
                         if (data.error) {
                             showToast(`Error: ${data.error}`, 'error');
